@@ -143,7 +143,7 @@ enum TombstoneCommands {
         approach: String,
         #[arg(short = 'r', long)]
         reason: String,
-        #[arg(long, default_value = "")]
+        #[arg(short = 'c', long, default_value = "")]
         cmd: String,
         #[arg(long, default_value = "")]
         sig: String,
@@ -154,7 +154,11 @@ enum TombstoneCommands {
         json: bool,
     },
     /// Show details of a Tombstone
-    Show { id: String },
+    Show {
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
     /// Revoke a Tombstone with an append-only lifecycle event
     Revoke {
         id: String,
@@ -180,6 +184,12 @@ enum InvariantCommands {
     },
     /// List all Invariant Contracts
     List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show details of an Invariant Contract
+    Show {
+        id: String,
         #[arg(long)]
         json: bool,
     },
@@ -359,11 +369,34 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
             }
-            TombstoneCommands::Show { id } => {
+            TombstoneCommands::Show { id, json } => {
                 if let Some(r) = db.get_record(&id)? {
-                    println!("{}", r.json);
+                    if json {
+                        let parsed: serde_json::Value = serde_json::from_str(&r.json)?;
+                        println!("{}", serde_json::to_string_pretty(&parsed)?);
+                    } else if let Ok(t) =
+                        serde_json::from_str::<cortex_core::schema::TombstoneRecord>(&r.json)
+                    {
+                        println!("Tombstone: {}", t.id);
+                        println!("  Branch:     {}", r.branch);
+                        println!("  Created:    {}", t.created_at);
+                        println!("  Harness:    {}", t.author_harness);
+                        println!("  Mode:       {:?}", t.capture_mode);
+                        println!("  Approach:   {}", t.attempted_approach);
+                        println!("  Reason:     {}", t.failure_reason);
+                        println!("  Test Cmd:   {}", t.verification_evidence.command);
+                        println!("  Signature:  {}", t.verification_evidence.error_signature);
+                        println!("  Symbols ({}):", t.target_symbols.len());
+                        for s in &t.target_symbols {
+                            println!("    • {} ({})", s.symbol_uri, s.ast_hash);
+                        }
+                    } else {
+                        let parsed: serde_json::Value = serde_json::from_str(&r.json)?;
+                        println!("{}", serde_json::to_string_pretty(&parsed)?);
+                    }
                 } else {
                     eprintln!("Tombstone '{}' not found", id);
+                    std::process::exit(1);
                 }
             }
             TombstoneCommands::Revoke { id, reason } => {
@@ -403,6 +436,37 @@ fn main() -> anyhow::Result<()> {
                     for inv in invariants {
                         println!("  • {} | {} | {}", inv.id, inv.created_at, inv.branch);
                     }
+                }
+            }
+            InvariantCommands::Show { id, json } => {
+                if let Some(r) = db.get_record(&id)? {
+                    if json {
+                        let parsed: serde_json::Value = serde_json::from_str(&r.json)?;
+                        println!("{}", serde_json::to_string_pretty(&parsed)?);
+                    } else if let Ok(c) =
+                        serde_json::from_str::<cortex_core::schema::InvariantContract>(&r.json)
+                    {
+                        println!("Invariant Contract: {}", c.invariant_id);
+                        println!("  Branch:       {}", r.branch);
+                        println!("  Created:      {}", r.created_at);
+                        println!("  Severity:     {:?}", c.severity);
+                        println!(
+                            "  Guarded:      {} ({})",
+                            c.guarded_symbol.symbol_uri, c.guarded_symbol.ast_hash
+                        );
+                        println!("  Assertion:    {}", c.assertion);
+                        println!("  Test Cmd:     {}", c.verification_test_cmd);
+                        println!("  Upstream Deps ({}):", c.upstream_dependencies.len());
+                        for d in &c.upstream_dependencies {
+                            println!("    • {} ({})", d.symbol_uri, d.expected_ast_hash);
+                        }
+                    } else {
+                        let parsed: serde_json::Value = serde_json::from_str(&r.json)?;
+                        println!("{}", serde_json::to_string_pretty(&parsed)?);
+                    }
+                } else {
+                    eprintln!("Invariant Contract '{}' not found", id);
+                    std::process::exit(1);
                 }
             }
             InvariantCommands::Reaffirm { id, reason } => {
