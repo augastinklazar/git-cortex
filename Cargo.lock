@@ -220,10 +220,12 @@ dependencies = [
 name = "cortex-capture"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "cortex-ast",
  "cortex-core",
  "cortex-engine",
  "cortex-storage",
+ "git2",
  "regex",
  "serde",
  "serde_json",
@@ -272,11 +274,15 @@ dependencies = [
 name = "cortex-engine"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "cortex-ast",
  "cortex-core",
  "cortex-storage",
+ "git2",
+ "hex",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror",
  "tracing",
