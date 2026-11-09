@@ -172,5 +172,8 @@ fn test_working_tree_dirty_hash_content_sensitive() {
     let hash2 = cortex_repo.working_tree_dirty_hash().unwrap();
     assert!(hash2.starts_with("wt:sha256:"));
 
-    assert_ne!(hash1, hash2, "Content modifications must yield distinct dirty hashes");
+    assert_ne!(
+        hash1, hash2,
+        "Content modifications must yield distinct dirty hashes"
+    );
 }

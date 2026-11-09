@@ -18,7 +18,9 @@ pub fn apply_migrations(conn: &mut Connection) -> Result<()> {
     if version < 1 {
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(|e| CortexError::Database(format!("Failed to begin migration transaction: {}", e)))?;
+            .map_err(|e| {
+                CortexError::Database(format!("Failed to begin migration transaction: {}", e))
+            })?;
 
         tx.execute_batch(
             r#"
@@ -118,8 +120,9 @@ pub fn apply_migrations(conn: &mut Connection) -> Result<()> {
         )
         .map_err(|e| CortexError::Database(format!("Failed to apply migrations: {}", e)))?;
 
-        tx.commit()
-            .map_err(|e| CortexError::Database(format!("Failed to commit migration transaction: {}", e)))?;
+        tx.commit().map_err(|e| {
+            CortexError::Database(format!("Failed to commit migration transaction: {}", e))
+        })?;
     }
 
     Ok(())
@@ -134,12 +137,16 @@ mod tests {
         let mut conn = Connection::open_in_memory().unwrap();
         apply_migrations(&mut conn).unwrap();
 
-        let v1: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        let v1: i32 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(v1, 1);
 
         // Second call should succeed and leave user_version at 1 without re-executing DDL
         apply_migrations(&mut conn).unwrap();
-        let v2: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        let v2: i32 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(v2, 1);
     }
 }

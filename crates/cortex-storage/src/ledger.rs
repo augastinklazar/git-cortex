@@ -68,9 +68,9 @@ impl CortexLedger {
             let parent_commit = Self::current_commit(repo)?;
             let mut builder = match &parent_commit {
                 Some(parent) => {
-                    let tree = parent
-                        .tree()
-                        .map_err(|e| CortexError::Git(format!("Failed to get parent tree: {}", e)))?;
+                    let tree = parent.tree().map_err(|e| {
+                        CortexError::Git(format!("Failed to get parent tree: {}", e))
+                    })?;
                     repo.treebuilder(Some(&tree))
                 }
                 None => repo.treebuilder(None),
@@ -90,9 +90,9 @@ impl CortexLedger {
             let tree_oid = builder
                 .write()
                 .map_err(|e| CortexError::Git(format!("Failed to write tree: {}", e)))?;
-            let tree = repo
-                .find_tree(tree_oid)
-                .map_err(|e| CortexError::Git(format!("Failed to find tree {}: {}", tree_oid, e)))?;
+            let tree = repo.find_tree(tree_oid).map_err(|e| {
+                CortexError::Git(format!("Failed to find tree {}: {}", tree_oid, e))
+            })?;
 
             let sig = Signature::now(author_name, author_email)
                 .map_err(|e| CortexError::Git(format!("Failed to create signature: {}", e)))?;
@@ -100,7 +100,9 @@ impl CortexLedger {
             let message = format!("cortex: append {} records to ledger", records.len());
 
             let commit_res = match &parent_commit {
-                Some(parent) => repo.commit(Some(LEDGER_REF), &sig, &sig, &message, &tree, &[parent]),
+                Some(parent) => {
+                    repo.commit(Some(LEDGER_REF), &sig, &sig, &message, &tree, &[parent])
+                }
                 None => repo.commit(Some(LEDGER_REF), &sig, &sig, &message, &tree, &[]),
             };
 
@@ -110,11 +112,16 @@ impl CortexLedger {
                     let is_conflict = e.code() == git2::ErrorCode::Modified
                         || e.message().contains("changed while committing");
                     if is_conflict && attempt + 1 < MAX_RETRIES {
-                        std::thread::sleep(std::time::Duration::from_millis(10 * (attempt as u64 + 1)));
+                        std::thread::sleep(std::time::Duration::from_millis(
+                            10 * (attempt as u64 + 1),
+                        ));
                         last_err = Some(e);
                         continue;
                     }
-                    return Err(CortexError::Git(format!("Failed to create ledger commit: {}", e)));
+                    return Err(CortexError::Git(format!(
+                        "Failed to create ledger commit: {}",
+                        e
+                    )));
                 }
             }
         }
@@ -597,7 +604,10 @@ mod tests {
         let count = CortexLedger::reindex_into_db(&repo, &mut db).unwrap();
         assert_eq!(count, 1);
 
-        let stored = db.get_record("tmb_00000000000000000000000099").unwrap().unwrap();
+        let stored = db
+            .get_record("tmb_00000000000000000000000099")
+            .unwrap()
+            .unwrap();
         assert_eq!(stored.branch, "feature/branch-x");
         assert_eq!(stored.created_at, "2026-01-01T00:00:00Z");
     }
