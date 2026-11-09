@@ -57,10 +57,27 @@ pub fn run_doctor(repo: &CortexRepo, db: &CortexDb) -> Result<()> {
     }
 
     // 4. Hooks
+    let custom_hooks_path = repo
+        .repo
+        .config()
+        .ok()
+        .and_then(|c| c.get_string("core.hooksPath").ok());
+    let hooks_dir = match custom_hooks_path {
+        Some(custom) if !custom.trim().is_empty() => {
+            let p = std::path::Path::new(&custom);
+            if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                repo.workdir.join(p)
+            }
+        }
+        _ => repo.git_dir.join("hooks"),
+    };
+
     let hooks = ["pre-commit", "post-commit", "post-checkout", "post-merge"];
     let mut installed_hooks = Vec::new();
     for h in hooks {
-        let p = repo.git_dir.join("hooks").join(h);
+        let p = hooks_dir.join(h);
         if p.exists() {
             if let Ok(c) = std::fs::read_to_string(&p) {
                 if c.contains("git-cortex") {
@@ -71,12 +88,16 @@ pub fn run_doctor(repo: &CortexRepo, db: &CortexDb) -> Result<()> {
     }
     if !installed_hooks.is_empty() {
         println!(
-            "✓ Git Hooks:       {} installed ({})",
+            "✓ Git Hooks:       {} installed ({}) in {}",
             installed_hooks.len(),
-            installed_hooks.join(", ")
+            installed_hooks.join(", "),
+            hooks_dir.display()
         );
     } else {
-        println!("! Git Hooks:       none installed (run `git cortex init --hooks`)");
+        println!(
+            "! Git Hooks:       none installed in {} (run `git cortex init --hooks`)",
+            hooks_dir.display()
+        );
     }
 
     // 5. Instruction blocks
@@ -90,8 +111,16 @@ pub fn run_doctor(repo: &CortexRepo, db: &CortexDb) -> Result<()> {
         && std::fs::read_to_string(&claude_md)
             .map(|c| c.contains("git-cortex"))
             .unwrap_or(false);
+    let instr_symbol = if has_agents && has_claude {
+        "✓"
+    } else if has_agents || has_claude {
+        "!"
+    } else {
+        "-"
+    };
     println!(
-        "✓ Instructions:    AGENTS.md: {}, CLAUDE.md: {}",
+        "{} Instructions:    AGENTS.md: {}, CLAUDE.md: {}",
+        instr_symbol,
         if has_agents { "active" } else { "missing" },
         if has_claude { "active" } else { "missing" }
     );
@@ -106,4 +135,33 @@ pub fn run_doctor(repo: &CortexRepo, db: &CortexDb) -> Result<()> {
 
     println!("=====================================");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use git2::Repository;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_doctor_detects_custom_hooks_path() {
+        let temp = TempDir::new().unwrap();
+        let git_repo = Repository::init(temp.path()).unwrap();
+
+        let mut config = git_repo.config().unwrap();
+        config.set_str("core.hooksPath", ".custom_hooks").unwrap();
+
+        let custom_hooks_dir = temp.path().join(".custom_hooks");
+        std::fs::create_dir_all(&custom_hooks_dir).unwrap();
+        std::fs::write(
+            custom_hooks_dir.join("pre-commit"),
+            "#!/bin/sh\ngit-cortex hook pre-commit\n",
+        )
+        .unwrap();
+
+        let cortex_repo = CortexRepo::discover(Some(temp.path())).unwrap();
+        let db = CortexDb::open_in_memory().unwrap();
+
+        assert!(run_doctor(&cortex_repo, &db).is_ok());
+    }
 }
