@@ -49,10 +49,10 @@ pub fn record_tombstone(
             let symbols = extract_symbols(Path::new(&rel_path), &src)?;
             if let Some(s) = symbols.iter().find(|s| s.scope_chain == scope) {
                 s.ast_hash.clone()
-            } else if let Some(first) = symbols.first() {
-                first.ast_hash.clone()
-            } else {
+            } else if scope == "<file>" {
                 "ast:sha256:0000000000000000".to_string()
+            } else {
+                return Err(CortexError::SymbolNotFound(scope, rel_path));
             }
         } else {
             "ast:sha256:0000000000000000".to_string()

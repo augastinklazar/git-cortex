@@ -237,3 +237,74 @@ fn test_invariant_guarded_symbol_drift_detection() {
         "<deleted_or_missing>"
     );
 }
+
+#[test]
+fn test_handoff_byte_budget_enforcement() {
+    let (_temp, repo, mut db) = setup_repo();
+
+    let branch = repo.current_branch().unwrap();
+    for i in 0..100 {
+        let hyp = ActiveHypothesis {
+            hypothesis_id: format!("hyp_{:03}", i),
+            statement: format!(
+                "Hypothesis number {} with detailed rationale and testing notes",
+                i
+            ),
+            confidence: (i as f64) / 100.0,
+            status: "ACTIVE".to_string(),
+            next_verification_step: "run test suite".to_string(),
+        };
+        db.save_hypothesis(&hyp, &branch).unwrap();
+    }
+
+    let long_objective = "A".repeat(8192);
+    let envelope = create_handoff_envelope(&repo, &db, None, Some(&long_objective)).unwrap();
+
+    let json = serde_json::to_string(&envelope).unwrap();
+    assert!(
+        json.len() <= MAX_HANDOFF_BYTES,
+        "Handoff envelope size {} exceeded max {}",
+        json.len(),
+        MAX_HANDOFF_BYTES
+    );
+    assert!(envelope.objective.ends_with("..."));
+}
+
+#[test]
+fn test_inspect_symbol_deleted_guarded_symbol() {
+    let (temp, repo, mut db) = setup_repo();
+
+    let _contract = record_invariant(
+        &repo,
+        &mut db,
+        "src/calc.rs#Calc::add",
+        "Calc::add invariant",
+        &[],
+        "cargo test",
+        InvariantSeverity::Blocking,
+    )
+    .unwrap();
+
+    // Remove file
+    let file = temp.path().join("src/calc.rs");
+    fs::remove_file(&file).unwrap();
+
+    let res = inspect_symbol(&repo, &db, "src/calc.rs", Some("Calc::add")).unwrap();
+    assert_eq!(res.active_invariants.len(), 0);
+    assert_eq!(res.stale_invariants.len(), 1);
+    assert!(res.stale_invariants[0].1.contains("missing or deleted"));
+}
+
+#[test]
+fn test_checkpoint_persists_to_sqlite() {
+    let (_temp, repo, mut db) = setup_repo();
+
+    let res = checkpoint_state(&repo, &mut db, "checkpoint test objective", &[], &[]).unwrap();
+
+    let stored = db.get_checkpoint(&res.checkpoint_id).unwrap();
+    assert!(stored.is_some());
+    let chk = stored.unwrap();
+    assert_eq!(chk.id, res.checkpoint_id);
+    assert_eq!(chk.objective, "checkpoint test objective");
+    assert_eq!(chk.snapshot_ref, res.snapshot_ref);
+}
