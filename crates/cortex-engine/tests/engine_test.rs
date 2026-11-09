@@ -187,3 +187,53 @@ fn test_promote_includes_lifecycle_events() {
         "Revocation event record was not found in ledger tree!"
     );
 }
+
+#[test]
+fn test_invariant_guarded_symbol_drift_detection() {
+    let (temp, repo, mut db) = setup_repo();
+
+    // Guard Calc::add with NO upstream dependencies
+    record_invariant(
+        &repo,
+        &mut db,
+        "src/calc.rs#Calc::add",
+        "Calc::add must not be mutated",
+        &[],
+        "cargo test",
+        InvariantSeverity::Blocking,
+    )
+    .unwrap();
+
+    // Verify passes initially
+    let report = verify_invariants(&repo, &db, DiffScope::WorkingTree).unwrap();
+    assert!(report.passed);
+
+    // Mutate Calc::add directly
+    let file = temp.path().join("src/calc.rs");
+    fs::write(
+        &file,
+        "pub struct Calc;\nimpl Calc {\n  pub fn add(&self, a: i32, b: i32) -> i32 {\n    a * b\n  }\n}\n",
+    )
+    .unwrap();
+
+    let report_mutated = verify_invariants(&repo, &db, DiffScope::WorkingTree).unwrap();
+    assert!(!report_mutated.passed);
+    assert_eq!(report_mutated.violations.len(), 1);
+    assert_eq!(
+        report_mutated.violations[0].guarded_symbol,
+        "src/calc.rs#Calc::add"
+    );
+    assert!(report_mutated.violations[0]
+        .upstream_symbol
+        .contains("guarded symbol mutated/deleted"));
+
+    // Delete calc.rs completely
+    fs::remove_file(&file).unwrap();
+    let report_deleted = verify_invariants(&repo, &db, DiffScope::WorkingTree).unwrap();
+    assert!(!report_deleted.passed);
+    assert_eq!(report_deleted.violations.len(), 1);
+    assert_eq!(
+        report_deleted.violations[0].actual_hash,
+        "<deleted_or_missing>"
+    );
+}

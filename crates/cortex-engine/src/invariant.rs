@@ -1,5 +1,5 @@
 use cortex_ast::extract_symbols;
-use cortex_ast::uri::parse_symbol_uri;
+use cortex_ast::uri::{normalize_rel_path, parse_symbol_uri};
 use cortex_core::error::{CortexError, Result};
 use cortex_core::id::{IdPrefix, PrefixedId};
 use cortex_core::jcs::{canonical_hash, to_canonical_json};
@@ -38,6 +38,7 @@ pub struct InvariantVerificationReport {
     pub warnings: Vec<InvariantViolation>,
 }
 
+/// Create and store an InvariantContract in SQLite state.db
 pub fn record_invariant(
     repo: &CortexRepo,
     db: &mut CortexDb,
@@ -113,6 +114,8 @@ pub fn record_invariant(
     Ok(contract)
 }
 
+/// Verify active invariant contracts against specified DiffScope.
+/// Verifies both guarded_symbol itself (catching mutations/deletions) and all upstream dependencies.
 pub fn verify_invariants(
     repo: &CortexRepo,
     db: &CortexDb,
@@ -139,39 +142,64 @@ pub fn verify_invariants(
             if revoked_invariants.contains(&contract.invariant_id) {
                 continue;
             }
+
+            // Check both guarded symbol itself AND all upstream dependencies
+            let mut check_targets: Vec<(&str, &str, bool)> =
+                Vec::with_capacity(1 + contract.upstream_dependencies.len());
+            check_targets.push((
+                &contract.guarded_symbol.symbol_uri,
+                &contract.guarded_symbol.ast_hash,
+                true,
+            ));
             for dep in &contract.upstream_dependencies {
-                if let Some((dep_path, dep_scope)) = parse_symbol_uri(&dep.symbol_uri) {
-                    let symbols = if let Some(s) = file_cache.get(&dep_path) {
-                        s.clone()
-                    } else {
-                        let syms = read_symbols_by_scope(repo, &dep_path, scope)?;
-                        file_cache.insert(dep_path.clone(), syms.clone());
-                        syms
+                check_targets.push((&dep.symbol_uri, &dep.expected_ast_hash, false));
+            }
+
+            for (target_uri, expected_hash, is_guarded_self) in check_targets {
+                let Some((dep_path, dep_scope)) = parse_symbol_uri(target_uri) else {
+                    continue;
+                };
+                let norm_path = normalize_rel_path(Path::new(&dep_path));
+                let symbols = if let Some(s) = file_cache.get(&norm_path) {
+                    s.clone()
+                } else {
+                    let syms = read_symbols_by_scope(repo, &norm_path, scope)?;
+                    file_cache.insert(norm_path.clone(), syms.clone());
+                    syms
+                };
+
+                let current_hash = symbols
+                    .iter()
+                    .find(|s| s.scope_chain == dep_scope || s.uri == target_uri)
+                    .map(|s| s.ast_hash.clone());
+
+                let drifted = match &current_hash {
+                    Some(h) => h != expected_hash,
+                    None => true, // Symbol or file was deleted
+                };
+
+                if drifted {
+                    let actual_hash =
+                        current_hash.unwrap_or_else(|| "<deleted_or_missing>".to_string());
+                    let v = InvariantViolation {
+                        invariant_id: contract.invariant_id.clone(),
+                        guarded_symbol: contract.guarded_symbol.symbol_uri.clone(),
+                        upstream_symbol: if is_guarded_self {
+                            format!("{} (guarded symbol mutated/deleted)", target_uri)
+                        } else {
+                            target_uri.to_string()
+                        },
+                        expected_hash: expected_hash.to_string(),
+                        actual_hash,
+                        severity: contract.severity,
+                        assertion: contract.assertion.clone(),
+                        verification_test_cmd: contract.verification_test_cmd.clone(),
                     };
 
-                    let current_hash = symbols
-                        .iter()
-                        .find(|s| s.scope_chain == dep_scope)
-                        .map(|s| s.ast_hash.clone())
-                        .unwrap_or_else(|| "ast:sha256:MISSING".to_string());
-
-                    if current_hash != dep.expected_ast_hash {
-                        let v = InvariantViolation {
-                            invariant_id: contract.invariant_id.clone(),
-                            guarded_symbol: contract.guarded_symbol.symbol_uri.clone(),
-                            upstream_symbol: dep.symbol_uri.clone(),
-                            expected_hash: dep.expected_ast_hash.clone(),
-                            actual_hash: current_hash,
-                            severity: contract.severity,
-                            assertion: contract.assertion.clone(),
-                            verification_test_cmd: contract.verification_test_cmd.clone(),
-                        };
-
-                        if contract.severity == InvariantSeverity::Blocking {
-                            violations.push(v);
-                        } else {
-                            warnings.push(v);
-                        }
+                    if contract.severity == InvariantSeverity::Blocking {
+                        violations.push(v);
+                    } else {
+                        warnings.push(v);
                     }
                 }
             }
@@ -229,10 +257,34 @@ fn read_symbols_by_scope(
                     .find_blob(entry.id)
                     .map_err(|e| CortexError::Git(e.to_string()))?;
                 extract_symbols(Path::new(rel_path), blob.content())
+            } else if let Ok(head_tree) = repo.repo.head().and_then(|h| h.peel_to_tree()) {
+                if let Ok(tree_entry) = head_tree.get_path(Path::new(rel_path)) {
+                    let blob = repo
+                        .repo
+                        .find_blob(tree_entry.id())
+                        .map_err(|e| CortexError::Git(e.to_string()))?;
+                    extract_symbols(Path::new(rel_path), blob.content())
+                } else {
+                    Ok(Vec::new())
+                }
             } else {
                 read_symbols_by_scope(repo, rel_path, DiffScope::WorkingTree)
             }
         }
-        DiffScope::Branch => read_symbols_by_scope(repo, rel_path, DiffScope::WorkingTree),
+        DiffScope::Branch => {
+            if let Ok(head_tree) = repo.repo.head().and_then(|h| h.peel_to_tree()) {
+                if let Ok(tree_entry) = head_tree.get_path(Path::new(rel_path)) {
+                    let blob = repo
+                        .repo
+                        .find_blob(tree_entry.id())
+                        .map_err(|e| CortexError::Git(e.to_string()))?;
+                    extract_symbols(Path::new(rel_path), blob.content())
+                } else {
+                    Ok(Vec::new())
+                }
+            } else {
+                read_symbols_by_scope(repo, rel_path, DiffScope::WorkingTree)
+            }
+        }
     }
 }
