@@ -1,2 +1,8 @@
 @echo off
-python -c "import sys, subprocess; args = ['clang.exe'] + [('--target=x86_64-w64-windows-gnu' if a.startswith('--target=') else a) for a in sys.argv[1:]]; sys.exit(subprocess.run(args).returncode)" %*
+setlocal
+set "ARGS=%*"
+if defined ARGS (
+    set "ARGS=%ARGS:--target=x86_64-pc-windows-gnullvm=--target=x86_64-w64-windows-gnu%"
+)
+clang.exe %ARGS%
+exit /b %ERRORLEVEL%
