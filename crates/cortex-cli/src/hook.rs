@@ -1,13 +1,13 @@
 use cortex_capture::reconcile_candidates;
 use cortex_core::error::Result;
-use cortex_engine::invariant::{verify_invariants, DiffScope};
+use cortex_engine::invariant::{verify_and_reaffirm_invariants, DiffScope};
 use cortex_engine::promote::promote_local_records;
 use cortex_storage::{CortexDb, CortexLedger, CortexRepo};
 
 pub fn handle_hook(repo: &CortexRepo, db: &mut CortexDb, hook_name: &str) -> Result<i32> {
     match hook_name {
         "pre-commit" => {
-            let report = verify_invariants(repo, db, DiffScope::Staged)?;
+            let report = verify_and_reaffirm_invariants(repo, db, DiffScope::Staged, true)?;
             if !report.passed {
                 eprintln!("\n❌ [git-cortex] Pre-commit Invariant Check Failed!");
                 eprintln!(

@@ -512,3 +512,81 @@ fn test_distributed_ledger_divergence_union_merge() {
     let count = cortex_storage::CortexLedger::reindex_into_db(&repo.repo, &mut db).unwrap();
     assert!(count >= 2);
 }
+
+#[test]
+fn test_verify_and_reaffirm_invariants_on_passing_test() {
+    let (_temp, repo, mut db) = setup_repo();
+
+    // 1. Record invariant contract with verification test command
+    let test_cmd = if cfg!(windows) {
+        "cmd /C exit 0"
+    } else {
+        "sh -c 'exit 0'"
+    };
+    let contract = record_invariant(
+        &repo,
+        &mut db,
+        "src/calc.rs#Calc::add",
+        "Add invariant",
+        &["src/calc.rs#Calc::add".to_string()],
+        test_cmd,
+        InvariantSeverity::Blocking,
+    )
+    .unwrap();
+
+    // 2. Modify and stage upstream symbol
+    let calc_file = repo.workdir.join("src/calc.rs");
+    fs::write(
+        &calc_file,
+        "pub struct Calc;\nimpl Calc {\n  pub fn add(&self, a: i32, b: i32) -> i32 {\n    a + b + 0\n  }\n}\n",
+    )
+    .unwrap();
+
+    let mut index = repo.repo.index().unwrap();
+    index.add_path(std::path::Path::new("src/calc.rs")).unwrap();
+    index.write().unwrap();
+
+    // 3. verify_and_reaffirm_invariants executes test_cmd on drift and auto-reaffirms contract
+    let report = verify_and_reaffirm_invariants(&repo, &mut db, DiffScope::Staged, true).unwrap();
+    assert!(
+        report.passed,
+        "Passing test command should auto-reaffirm contract"
+    );
+
+    // 4. Verify invariant was reaffirmed in DB with updated AST hash
+    let stored = db.get_record(&contract.invariant_id).unwrap().unwrap();
+    let reaffirmed: cortex_core::schema::InvariantContract =
+        serde_json::from_str(&stored.json).unwrap();
+    assert_ne!(
+        reaffirmed.guarded_symbol.ast_hash,
+        contract.guarded_symbol.ast_hash
+    );
+}
+
+#[test]
+fn test_rewind_untracked_files_preserved_in_snapshot() {
+    let (_temp, repo, mut db) = setup_repo();
+
+    // Create checkpoint
+    let chk = checkpoint_state(&repo, &mut db, "initial checkpoint", &[], &[]).unwrap();
+
+    // Create an untracked file in working tree
+    let new_file = repo.workdir.join("src/untracked_feature.rs");
+    fs::write(&new_file, "pub fn experimental_code() -> bool { true }").unwrap();
+    assert!(new_file.exists());
+
+    // Perform rewind
+    let res = rewind_to_checkpoint(&repo, &mut db, &chk.checkpoint_id, None).unwrap();
+    assert_eq!(res.target_checkpoint_id, chk.checkpoint_id);
+
+    // Verify untracked snapshot exists under refs/cortex/untracked/<id>
+    let untracked_ref = format!("refs/cortex/untracked/{}", chk.checkpoint_id);
+    let reference = repo.repo.find_reference(&untracked_ref).unwrap();
+    let commit = reference.peel_to_commit().unwrap();
+    let tree = commit.tree().unwrap();
+    assert!(
+        tree.get_path(std::path::Path::new("src/untracked_feature.rs"))
+            .is_ok(),
+        "Untracked file must be preserved in untracked snapshot commit"
+    );
+}
