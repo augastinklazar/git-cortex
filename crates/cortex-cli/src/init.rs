@@ -34,26 +34,50 @@ pub fn run_init(repo: &CortexRepo, opts: &InitOptions) -> Result<Vec<String>> {
         .repo
         .config()
         .map_err(|e| CortexError::Git(e.to_string()))?;
-    let fetch_refspec = "+refs/cortex/ledger:refs/cortex/ledger";
+    let safe_ledger_refspec = "+refs/cortex/ledger:refs/remotes/origin/cortex/ledger";
+    let default_heads_refspec = "+refs/heads/*:refs/remotes/origin/*";
     let fetch_key = "remote.origin.fetch";
 
-    let mut exists = false;
-    {
-        if let Ok(mut entries) = git_config.entries(Some(fetch_key)) {
-            while let Some(Ok(entry)) = entries.next() {
-                if let Some(val) = entry.value() {
-                    if val.contains("refs/cortex/ledger") {
-                        exists = true;
-                        break;
-                    }
+    let mut has_heads = false;
+    let mut has_safe_ledger = false;
+    let mut has_dangerous_ledger = false;
+
+    if let Ok(mut entries) = git_config.entries(Some(fetch_key)) {
+        while let Some(Ok(entry)) = entries.next() {
+            if let Some(val) = entry.value() {
+                if val.contains("refs/heads/") {
+                    has_heads = true;
+                }
+                if val == safe_ledger_refspec {
+                    has_safe_ledger = true;
+                }
+                if val == "+refs/cortex/ledger:refs/cortex/ledger" {
+                    has_dangerous_ledger = true;
                 }
             }
         }
     }
 
-    if !exists {
-        let _ = git_config.set_multivar(fetch_key, ".*", fetch_refspec);
+    if has_dangerous_ledger {
+        // Replace dangerous direct-overwrite refspec with safe remote-tracking refspec
+        let _ = git_config.set_multivar(
+            fetch_key,
+            r"^\+refs/cortex/ledger:refs/cortex/ledger$",
+            safe_ledger_refspec,
+        );
+        actions.push(
+            "Updated dangerous git fetch refspec to remote-tracking refs/remotes/origin/cortex/ledger"
+                .to_string(),
+        );
+    } else if !has_safe_ledger {
+        // Append safe ledger refspec without replacing existing entries
+        let _ = git_config.set_multivar(fetch_key, "^$", safe_ledger_refspec);
         actions.push("Configured git fetch refspec for refs/cortex/ledger".to_string());
+    }
+
+    // Ensure primary branch fetch refspec is preserved
+    if !has_heads {
+        let _ = git_config.set_multivar(fetch_key, "^$", default_heads_refspec);
     }
 
     // 3. Install chained git hooks
@@ -136,7 +160,7 @@ fn install_chained_hook(hooks_dir: &Path, hook_name: &str, cortex_cmd: &str) -> 
     }
 
     let hook_snippet = format!(
-        "\n{}\nif command -v git-cortex >/dev/null 2>&1; then\n    git-cortex hook {}\nelif command -v cortex >/dev/null 2>&1; then\n    cortex hook {}\nfi\n{}\n",
+        "\n{}\nif command -v git-cortex >/dev/null 2>&1; then\n    git-cortex hook {} || exit $?\nelif command -v cortex >/dev/null 2>&1; then\n    cortex hook {} || exit $?\nfi\n{}\n",
         marker_begin, cortex_cmd, cortex_cmd, marker_end
     );
 
@@ -172,4 +196,125 @@ fn append_block_if_missing(file_path: &Path, block: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use git2::Repository;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_init_preserves_heads_refspec_and_sets_safe_ledger_refspec() {
+        let temp = TempDir::new().unwrap();
+        let git_repo = Repository::init(temp.path()).unwrap();
+
+        // Simulate a remote 'origin' configured with default fetch refspec
+        let mut config = git_repo.config().unwrap();
+        config
+            .set_multivar(
+                "remote.origin.fetch",
+                "^$",
+                "+refs/heads/*:refs/remotes/origin/*",
+            )
+            .unwrap();
+
+        let cortex_repo = CortexRepo::discover(Some(temp.path())).unwrap();
+        let opts = InitOptions {
+            install_hooks: true,
+            setup_agents_md: true,
+            setup_mcp_config: true,
+        };
+
+        let actions = run_init(&cortex_repo, &opts).unwrap();
+        assert!(!actions.is_empty());
+
+        // Verify refspecs in config
+        let updated_config = git_repo.config().unwrap();
+        let mut refspecs = Vec::new();
+        if let Ok(mut entries) = updated_config.entries(Some("remote.origin.fetch")) {
+            while let Some(Ok(entry)) = entries.next() {
+                if let Some(val) = entry.value() {
+                    refspecs.push(val.to_string());
+                }
+            }
+        }
+
+        // Heads refspec MUST still be present
+        assert!(
+            refspecs
+                .iter()
+                .any(|r| r == "+refs/heads/*:refs/remotes/origin/*"),
+            "Default heads fetch refspec was wiped out!"
+        );
+
+        // Safe ledger tracking refspec MUST be present
+        assert!(
+            refspecs
+                .iter()
+                .any(|r| r == "+refs/cortex/ledger:refs/remotes/origin/cortex/ledger"),
+            "Safe remote-tracking ledger refspec is missing!"
+        );
+
+        // Direct clobbering refspec MUST NOT be present
+        assert!(
+            !refspecs
+                .iter()
+                .any(|r| r == "+refs/cortex/ledger:refs/cortex/ledger"),
+            "Dangerous clobbering refspec is present!"
+        );
+    }
+
+    #[test]
+    fn test_init_migrates_dangerous_refspec_to_safe() {
+        let temp = TempDir::new().unwrap();
+        let git_repo = Repository::init(temp.path()).unwrap();
+
+        let mut config = git_repo.config().unwrap();
+        config
+            .set_multivar(
+                "remote.origin.fetch",
+                "^$",
+                "+refs/cortex/ledger:refs/cortex/ledger",
+            )
+            .unwrap();
+
+        let cortex_repo = CortexRepo::discover(Some(temp.path())).unwrap();
+        let opts = InitOptions {
+            install_hooks: false,
+            setup_agents_md: false,
+            setup_mcp_config: false,
+        };
+
+        let _ = run_init(&cortex_repo, &opts).unwrap();
+
+        let updated_config = git_repo.config().unwrap();
+        let mut refspecs = Vec::new();
+        if let Ok(mut entries) = updated_config.entries(Some("remote.origin.fetch")) {
+            while let Some(Ok(entry)) = entries.next() {
+                if let Some(val) = entry.value() {
+                    refspecs.push(val.to_string());
+                }
+            }
+        }
+
+        assert!(
+            !refspecs
+                .iter()
+                .any(|r| r == "+refs/cortex/ledger:refs/cortex/ledger"),
+            "Dangerous refspec was not migrated!"
+        );
+        assert!(
+            refspecs
+                .iter()
+                .any(|r| r == "+refs/cortex/ledger:refs/remotes/origin/cortex/ledger"),
+            "Migrated safe refspec is missing!"
+        );
+        assert!(
+            refspecs
+                .iter()
+                .any(|r| r == "+refs/heads/*:refs/remotes/origin/*"),
+            "Missing default heads refspec was not restored!"
+        );
+    }
 }
