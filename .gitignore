@@ -1,0 +1,24 @@
+/target
+target/
+**/*.rs.bk
+*.pdb
+
+# Local state
+.git/cortex/
+*.db
+*.db-wal
+*.db-shm
+
+# IDE & OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node / packaging
+node_modules/
+dist/
+*.tgz

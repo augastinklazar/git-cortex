@@ -1,0 +1,68 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/cortex-core",
+    "crates/cortex-ast",
+    "crates/cortex-storage",
+    "crates/cortex-engine",
+    "crates/cortex-capture",
+    "crates/cortex-mcp",
+    "crates/cortex-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/augastinklazar/git-cortex"
+authors = ["git-cortex contributors"]
+description = "Git-Native Epistemic Working Memory, Negative-Knowledge Tombstones, and Causal Invariant Locks for Multi-Agent Software Engineering"
+
+[workspace.dependencies]
+# Internal crates
+cortex-core = { path = "crates/cortex-core", version = "0.1.0" }
+cortex-ast = { path = "crates/cortex-ast", version = "0.1.0" }
+cortex-storage = { path = "crates/cortex-storage", version = "0.1.0" }
+cortex-engine = { path = "crates/cortex-engine", version = "0.1.0" }
+cortex-capture = { path = "crates/cortex-capture", version = "0.1.0" }
+cortex-mcp = { path = "crates/cortex-mcp", version = "0.1.0" }
+
+# Serialization & Canonical JSON
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+serde_jcs = "0.1"
+
+# Identifiers & Cryptography
+ulid = { version = "1.1", features = ["serde"] }
+sha2 = "0.10"
+hex = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Storage & Git
+rusqlite = { version = "0.32", features = ["bundled"] }
+git2 = { version = "0.19", default-features = false }
+
+# AST & Parsing
+tree-sitter = "0.22"
+tree-sitter-typescript = "0.21"
+tree-sitter-javascript = "0.21"
+tree-sitter-python = "0.21"
+tree-sitter-rust = "0.21"
+tree-sitter-go = "0.21"
+
+# CLI & Utilities
+clap = { version = "4.5", features = ["derive", "env"] }
+regex = "1.10"
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tempfile = "3.12"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"

@@ -1,0 +1,21 @@
+[package]
+name = "cortex-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Two-tier storage engine (SQLite WAL cache and refs/cortex/ledger) for git-cortex"
+
+[dependencies]
+cortex-core.workspace = true
+cortex-ast.workspace = true
+rusqlite.workspace = true
+git2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
