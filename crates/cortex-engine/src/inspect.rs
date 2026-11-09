@@ -1,4 +1,3 @@
-use cortex_ast::extract_symbols;
 use cortex_ast::uri::{normalize_rel_path, parse_symbol_uri};
 use cortex_core::error::{CortexError, Result};
 use cortex_core::fence::{fence_invariant, fence_tombstone, Provenance};
@@ -31,18 +30,7 @@ pub fn inspect_symbol(
 
     let symbols = if full_path.exists() {
         let source = std::fs::read(&full_path).map_err(CortexError::Io)?;
-        let blob_oid = cortex_core::jcs::sha256_digest(&source);
-        if let Ok(Some(cached_json)) = db.get_cached_symbols(&norm_path, &blob_oid) {
-            serde_json::from_str::<Vec<cortex_ast::Symbol>>(&cached_json).unwrap_or_else(|_| {
-                extract_symbols(Path::new(&norm_path), &source).unwrap_or_default()
-            })
-        } else {
-            let extracted = extract_symbols(Path::new(&norm_path), &source)?;
-            if let Ok(json) = serde_json::to_string(&extracted) {
-                let _ = db.set_cached_symbols(&norm_path, &blob_oid, &json);
-            }
-            extracted
-        }
+        repo.extract_symbols_cached(Path::new(&norm_path), &source)?
     } else {
         Vec::new()
     };
@@ -169,7 +157,9 @@ pub fn inspect_symbol(
                         let dep_full_path = repo.workdir.join(&dep_path);
                         let dep_curr_hash = if dep_full_path.exists() {
                             if let Ok(src) = std::fs::read(&dep_full_path) {
-                                if let Ok(syms) = extract_symbols(Path::new(&dep_path), &src) {
+                                if let Ok(syms) =
+                                    repo.extract_symbols_cached(Path::new(&dep_path), &src)
+                                {
                                     syms.into_iter()
                                         .find(|s| s.scope_chain == dep_scope)
                                         .map(|s| s.ast_hash)

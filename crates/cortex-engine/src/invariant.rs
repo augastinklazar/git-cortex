@@ -1,4 +1,3 @@
-use cortex_ast::extract_symbols;
 use cortex_ast::uri::{normalize_rel_path, parse_symbol_uri};
 use cortex_core::error::{CortexError, Result};
 use cortex_core::id::{IdPrefix, PrefixedId};
@@ -223,7 +222,7 @@ fn get_symbol_hash(repo: &CortexRepo, rel_path: &str, scope: &str) -> Result<Str
         return Ok("ast:sha256:0000000000000000".to_string());
     }
     let src = std::fs::read(&full).map_err(CortexError::Io)?;
-    let syms = extract_symbols(Path::new(rel_path), &src)?;
+    let syms = repo.extract_symbols_cached(Path::new(rel_path), &src)?;
     if let Some(s) = syms.iter().find(|s| s.scope_chain == scope) {
         Ok(s.ast_hash.clone())
     } else {
@@ -241,7 +240,7 @@ fn read_symbols_by_scope(
             let full = repo.workdir.join(rel_path);
             if full.exists() {
                 let src = std::fs::read(&full).map_err(CortexError::Io)?;
-                extract_symbols(Path::new(rel_path), &src)
+                repo.extract_symbols_cached(Path::new(rel_path), &src)
             } else {
                 Ok(Vec::new())
             }
@@ -256,14 +255,14 @@ fn read_symbols_by_scope(
                     .repo
                     .find_blob(entry.id)
                     .map_err(|e| CortexError::Git(e.to_string()))?;
-                extract_symbols(Path::new(rel_path), blob.content())
+                repo.extract_symbols_cached(Path::new(rel_path), blob.content())
             } else if let Ok(head_tree) = repo.repo.head().and_then(|h| h.peel_to_tree()) {
                 if let Ok(tree_entry) = head_tree.get_path(Path::new(rel_path)) {
                     let blob = repo
                         .repo
                         .find_blob(tree_entry.id())
                         .map_err(|e| CortexError::Git(e.to_string()))?;
-                    extract_symbols(Path::new(rel_path), blob.content())
+                    repo.extract_symbols_cached(Path::new(rel_path), blob.content())
                 } else {
                     Ok(Vec::new())
                 }
@@ -278,7 +277,7 @@ fn read_symbols_by_scope(
                         .repo
                         .find_blob(tree_entry.id())
                         .map_err(|e| CortexError::Git(e.to_string()))?;
-                    extract_symbols(Path::new(rel_path), blob.content())
+                    repo.extract_symbols_cached(Path::new(rel_path), blob.content())
                 } else {
                     Ok(Vec::new())
                 }

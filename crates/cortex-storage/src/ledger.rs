@@ -1,4 +1,4 @@
-use crate::db::CortexDb;
+use crate::db::{BatchRecordItem, CortexDb};
 use cortex_core::error::{CortexError, Result};
 use cortex_core::jcs::sha256_digest;
 use cortex_core::schema::{InvariantContract, TombstoneRecord};
@@ -143,8 +143,13 @@ impl CortexLedger {
             .tree()
             .map_err(|e| CortexError::Git(format!("Failed to get ledger tree: {}", e)))?;
 
+        let mut batch = Vec::with_capacity(500);
         let mut indexed_count = 0;
-        walk_tree_and_index(repo, &tree, "", db, &mut indexed_count)?;
+        walk_tree_and_index(repo, &tree, "", db, &mut batch, &mut indexed_count)?;
+
+        if !batch.is_empty() {
+            db.save_records_batch(&batch)?;
+        }
 
         Ok(indexed_count)
     }
@@ -349,6 +354,7 @@ fn walk_tree_and_index(
     tree: &Tree,
     prefix: &str,
     db: &mut CortexDb,
+    batch: &mut Vec<BatchRecordItem>,
     count: &mut usize,
 ) -> Result<()> {
     for entry in tree.iter() {
@@ -366,7 +372,7 @@ fn walk_tree_and_index(
             let subtree = repo
                 .find_tree(entry.id())
                 .map_err(|e| CortexError::Git(e.to_string()))?;
-            walk_tree_and_index(repo, &subtree, &entry_path, db, count)?;
+            walk_tree_and_index(repo, &subtree, &entry_path, db, batch, count)?;
         } else if entry.kind() == Some(git2::ObjectType::Blob) && name.ends_with(".json") {
             let blob = repo
                 .find_blob(entry.id())
@@ -397,60 +403,64 @@ fn walk_tree_and_index(
                 }
             }
 
-            db.save_record_with_timestamp(
-                id,
-                kind,
-                content,
-                "LEDGER",
-                true,
-                &branch,
-                &created_at,
-                &content_hash,
-            )?;
-
+            let mut symbol_refs = Vec::new();
             if kind == "TOMBSTONE" {
                 if let Ok(record) = serde_json::from_str::<TombstoneRecord>(content) {
-                    let mut sym_tuples = Vec::new();
                     for ts in &record.target_symbols {
-                        let path = ts.symbol_uri.split('#').next().unwrap_or("");
-                        sym_tuples.push((
-                            ts.symbol_uri.as_str(),
+                        let path = ts.symbol_uri.split('#').next().unwrap_or("").to_string();
+                        symbol_refs.push((
+                            ts.symbol_uri.clone(),
                             path,
-                            ts.ast_hash.as_str(),
-                            "TARGET",
+                            ts.ast_hash.clone(),
+                            "TARGET".to_string(),
                         ));
                     }
-                    let _ = db.index_record_symbols(id, &sym_tuples);
                 }
             } else if kind == "INVARIANT" {
                 if let Ok(contract) = serde_json::from_str::<InvariantContract>(content) {
-                    let mut sym_tuples = Vec::new();
                     let guarded_path = contract
                         .guarded_symbol
                         .symbol_uri
                         .split('#')
                         .next()
-                        .unwrap_or("");
-                    sym_tuples.push((
-                        contract.guarded_symbol.symbol_uri.as_str(),
+                        .unwrap_or("")
+                        .to_string();
+                    symbol_refs.push((
+                        contract.guarded_symbol.symbol_uri.clone(),
                         guarded_path,
-                        contract.guarded_symbol.ast_hash.as_str(),
-                        "GUARDED",
+                        contract.guarded_symbol.ast_hash.clone(),
+                        "GUARDED".to_string(),
                     ));
                     for dep in &contract.upstream_dependencies {
-                        let dep_path = dep.symbol_uri.split('#').next().unwrap_or("");
-                        sym_tuples.push((
-                            dep.symbol_uri.as_str(),
+                        let dep_path = dep.symbol_uri.split('#').next().unwrap_or("").to_string();
+                        symbol_refs.push((
+                            dep.symbol_uri.clone(),
                             dep_path,
-                            dep.expected_ast_hash.as_str(),
-                            "UPSTREAM_DEP",
+                            dep.expected_ast_hash.clone(),
+                            "UPSTREAM_DEP".to_string(),
                         ));
                     }
-                    let _ = db.index_record_symbols(id, &sym_tuples);
                 }
             }
 
+            batch.push(BatchRecordItem {
+                id: id.to_string(),
+                kind: kind.to_string(),
+                json: content.to_string(),
+                origin: "LEDGER".to_string(),
+                promoted: true,
+                branch,
+                created_at,
+                content_hash,
+                symbol_refs,
+            });
+
             *count += 1;
+
+            if batch.len() >= 500 {
+                db.save_records_batch(batch)?;
+                batch.clear();
+            }
         }
     }
     Ok(())
