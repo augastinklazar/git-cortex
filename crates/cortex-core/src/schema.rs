@@ -236,6 +236,27 @@ pub struct LifecycleEvent {
     pub extensions: BTreeMap<String, serde_json::Value>,
 }
 
+impl LifecycleEvent {
+    pub fn new(
+        event_id: String,
+        target_id: String,
+        event_type: EventType,
+        reason: String,
+        author: String,
+    ) -> Self {
+        Self {
+            schema: EVENT_SCHEMA.to_string(),
+            event_id,
+            target_id,
+            event_type,
+            reason,
+            created_at: Utc::now(),
+            author,
+            extensions: BTreeMap::new(),
+        }
+    }
+}
+
 /// Query-time evaluated status of a Tombstone or Invariant
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DerivedStatus {

@@ -119,12 +119,26 @@ pub fn verify_invariants(
     scope: DiffScope,
 ) -> Result<InvariantVerificationReport> {
     let records = db.list_records_by_kind("INVARIANT")?;
+    let events = db.list_records_by_kind("EVENT").unwrap_or_default();
+    let mut revoked_invariants = std::collections::HashSet::new();
+    for evt_rec in events {
+        if let Ok(evt) = serde_json::from_str::<cortex_core::schema::LifecycleEvent>(&evt_rec.json)
+        {
+            if evt.event_type == cortex_core::schema::EventType::Revoke {
+                revoked_invariants.insert(evt.target_id);
+            }
+        }
+    }
+
     let mut violations = Vec::new();
     let mut warnings = Vec::new();
     let mut file_cache: HashMap<String, Vec<cortex_ast::Symbol>> = HashMap::new();
 
     for stored in &records {
         if let Ok(contract) = serde_json::from_str::<InvariantContract>(&stored.json) {
+            if revoked_invariants.contains(&contract.invariant_id) {
+                continue;
+            }
             for dep in &contract.upstream_dependencies {
                 if let Some((dep_path, dep_scope)) = parse_symbol_uri(&dep.symbol_uri) {
                     let symbols = if let Some(s) = file_cache.get(&dep_path) {
