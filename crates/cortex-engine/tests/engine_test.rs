@@ -136,3 +136,54 @@ fn test_handoff_and_budget() {
         .to_string()
         .contains("https://git-cortex.dev/a2a-extension/v0.1"));
 }
+
+#[test]
+fn test_promote_includes_lifecycle_events() {
+    let (_temp, repo, mut db) = setup_repo();
+
+    let tombstone = record_tombstone(
+        &repo,
+        &mut db,
+        RecordTombstoneParams {
+            target_symbols: &["src/calc.rs#Calc::add".to_string()],
+            attempted_approach: "Naive recursion",
+            failure_reason: "Stack overflow",
+            test_command: "cargo test",
+            error_signature: "fatal runtime error: stack overflow",
+            author_harness: "test",
+            capture_mode: CaptureMode::Manual,
+        },
+    )
+    .unwrap();
+
+    let revoke_evt = cortex_engine::lifecycle::revoke_record(
+        &repo,
+        &mut db,
+        &tombstone.id,
+        "Stack size was increased in runtime config",
+        "tester",
+    )
+    .unwrap();
+
+    let promoted_count = promote_local_records(&repo, &mut db).unwrap();
+    assert_eq!(promoted_count, 2);
+
+    let commit = cortex_storage::CortexLedger::current_commit(&repo.repo)
+        .unwrap()
+        .unwrap();
+    let tree = commit.tree().unwrap();
+    let mut found_event = false;
+    let event_filename = format!("{}.json", revoke_evt.event_id);
+    let _ = tree.walk(git2::TreeWalkMode::PreOrder, |_root, entry| {
+        if let Some(name) = entry.name() {
+            if name == event_filename {
+                found_event = true;
+            }
+        }
+        git2::TreeWalkResult::Ok
+    });
+    assert!(
+        found_event,
+        "Revocation event record was not found in ledger tree!"
+    );
+}
