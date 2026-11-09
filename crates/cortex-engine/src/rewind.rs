@@ -91,17 +91,19 @@ fn find_modified_symbols_against_checkpoint(
         .map_err(|e| CortexError::Rewind(format!("Failed to peel checkpoint to commit: {}", e)))?;
     let tree = commit.tree().map_err(|e| CortexError::Git(e.to_string()))?;
 
-    let mut status_opts = git2::StatusOptions::new();
-    status_opts.include_untracked(true).include_ignored(false);
-    let statuses = repo
+    let mut diff_opts = git2::DiffOptions::new();
+    diff_opts.include_untracked(true);
+    let diff = repo
         .repo
-        .statuses(Some(&mut status_opts))
-        .map_err(|e| CortexError::Git(e.to_string()))?;
+        .diff_tree_to_workdir_with_index(Some(&tree), Some(&mut diff_opts))
+        .map_err(|e| {
+            CortexError::Git(format!("Failed to diff checkpoint tree to workdir: {}", e))
+        })?;
 
     let mut modified = Vec::new();
-    for entry in statuses.iter() {
-        if let Some(rel_path_str) = entry.path() {
-            let rel_path = std::path::Path::new(rel_path_str);
+    for delta in diff.deltas() {
+        let rel_path_str = delta.new_file().path().or_else(|| delta.old_file().path());
+        if let Some(rel_path) = rel_path_str {
             let full_path = repo.workdir.join(rel_path);
             if !full_path.exists() {
                 continue;

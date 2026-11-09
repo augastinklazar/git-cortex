@@ -44,6 +44,14 @@ pub fn checkpoint_state(
         db.save_hypothesis(hyp, &branch)?;
     }
 
+    // Persist checkpoint metadata in SQLite checkpoints table
+    let state_json = serde_json::json!({
+        "edge_count": verified_edges.len(),
+        "hypothesis_count": active_hypotheses.len(),
+    })
+    .to_string();
+    db.save_checkpoint(&chk_id, &branch, &snapshot_ref, objective, &state_json)?;
+
     Ok(CheckpointResult {
         checkpoint_id: chk_id,
         snapshot_ref,

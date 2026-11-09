@@ -62,13 +62,20 @@ pub fn sync_ledger(repo: &CortexRepo, db: &mut CortexDb, remote: Option<&str>) -
             if out.status.success() {
                 format!("Pushed {} to {}", LEDGER_REF, remote_name)
             } else {
-                format!(
-                    "Push notice: {}",
-                    String::from_utf8_lossy(&out.stderr).trim()
-                )
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                return Err(cortex_core::error::CortexError::Git(format!(
+                    "Failed to push ledger ref to {}: {}",
+                    remote_name,
+                    stderr.trim()
+                )));
             }
         }
-        Err(e) => format!("Could not run git push: {}", e),
+        Err(e) => {
+            return Err(cortex_core::error::CortexError::Git(format!(
+                "Could not run git push: {}",
+                e
+            )));
+        }
     };
 
     let full_status = if merge_msg.is_empty() {

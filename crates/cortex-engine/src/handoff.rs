@@ -91,6 +91,42 @@ fn enforce_byte_budget(envelope: &mut EpistemicHandoff, max_bytes: usize) -> Res
         envelope.active_tombstone_ids.remove(0);
         json = serde_json::to_string(envelope).map_err(CortexError::Json)?;
     }
+    if json.len() <= max_bytes {
+        return Ok(());
+    }
+
+    // Priority 4: Drop active hypotheses from lowest confidence to highest
+    envelope.active_hypotheses.sort_by(|a, b| {
+        a.confidence
+            .partial_cmp(&b.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    while json.len() > max_bytes && !envelope.active_hypotheses.is_empty() {
+        envelope.active_hypotheses.remove(0);
+        json = serde_json::to_string(envelope).map_err(CortexError::Json)?;
+    }
+    if json.len() <= max_bytes {
+        return Ok(());
+    }
+
+    // Priority 5: Truncate objective safely at UTF-8 character boundaries
+    while json.len() > max_bytes && envelope.objective.len() > 3 {
+        let excess = json.len() - max_bytes;
+        let truncate_len = envelope.objective.len().saturating_sub(excess + 3);
+        let valid_len = envelope
+            .objective
+            .char_indices()
+            .map(|(idx, _)| idx)
+            .take_while(|&idx| idx <= truncate_len)
+            .last()
+            .unwrap_or(0);
+        envelope.objective.truncate(valid_len);
+        envelope.objective.push_str("...");
+        json = serde_json::to_string(envelope).map_err(CortexError::Json)?;
+        if envelope.objective == "..." {
+            break;
+        }
+    }
 
     Ok(())
 }

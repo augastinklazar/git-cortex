@@ -33,6 +33,16 @@ pub struct StoredCandidate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredCheckpoint {
+    pub id: String,
+    pub branch: String,
+    pub snapshot_ref: String,
+    pub objective: String,
+    pub state_json: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredExec {
     pub id: String,
     pub cmd: String,
@@ -592,5 +602,84 @@ impl CortexDb {
         } else {
             Ok(None)
         }
+    }
+
+    pub fn save_checkpoint(
+        &mut self,
+        id: &str,
+        branch: &str,
+        snapshot_ref: &str,
+        objective: &str,
+        state_json: &str,
+    ) -> Result<()> {
+        let created_at = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO checkpoints (id, branch, snapshot_ref, objective, state_json, created_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                ON CONFLICT(id) DO UPDATE SET
+                    branch = excluded.branch,
+                    snapshot_ref = excluded.snapshot_ref,
+                    objective = excluded.objective,
+                    state_json = excluded.state_json,
+                    created_at = excluded.created_at
+                "#,
+                params![id, branch, snapshot_ref, objective, state_json, created_at],
+            )
+            .map_err(|e| CortexError::Database(format!("Failed to save checkpoint: {}", e)))?;
+        Ok(())
+    }
+
+    pub fn get_checkpoint(&self, id: &str) -> Result<Option<StoredCheckpoint>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, branch, snapshot_ref, objective, state_json, created_at FROM checkpoints WHERE id = ?1")
+            .map_err(|e| CortexError::Database(e.to_string()))?;
+
+        let mut rows = stmt
+            .query_map(params![id], |row| {
+                Ok(StoredCheckpoint {
+                    id: row.get(0)?,
+                    branch: row.get(1)?,
+                    snapshot_ref: row.get(2)?,
+                    objective: row.get(3)?,
+                    state_json: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })
+            .map_err(|e| CortexError::Database(e.to_string()))?;
+
+        if let Some(r) = rows.next() {
+            Ok(Some(r.map_err(|e| CortexError::Database(e.to_string()))?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn list_checkpoints(&self, branch: &str) -> Result<Vec<StoredCheckpoint>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, branch, snapshot_ref, objective, state_json, created_at FROM checkpoints WHERE branch = ?1 ORDER BY created_at DESC")
+            .map_err(|e| CortexError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![branch], |row| {
+                Ok(StoredCheckpoint {
+                    id: row.get(0)?,
+                    branch: row.get(1)?,
+                    snapshot_ref: row.get(2)?,
+                    objective: row.get(3)?,
+                    state_json: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })
+            .map_err(|e| CortexError::Database(e.to_string()))?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r.map_err(|e| CortexError::Database(e.to_string()))?);
+        }
+        Ok(list)
     }
 }

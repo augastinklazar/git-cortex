@@ -1,4 +1,4 @@
-use cortex_ast::extract_symbols;
+﻿use cortex_ast::extract_symbols;
 use cortex_ast::uri::parse_symbol_uri;
 use cortex_core::error::{CortexError, Result};
 use cortex_core::id::{IdPrefix, PrefixedId};
