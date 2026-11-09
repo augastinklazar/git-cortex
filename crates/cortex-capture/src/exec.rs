@@ -55,11 +55,19 @@ pub fn execute_command(
     let prog = &cmd_args[0];
     let args = &cmd_args[1..];
 
-    let mut child = Command::new(prog)
-        .args(args)
+    let mut cmd = Command::new(prog);
+    cmd.args(args)
         .current_dir(&repo.workdir)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    let mut child = cmd
         .spawn()
         .map_err(|e| CortexError::Other(format!("Failed to spawn command '{}': {}", prog, e)))?;
 
@@ -94,6 +102,18 @@ pub fn execute_command(
                 Ok(Some(st)) => break st,
                 Ok(None) => {
                     if start_time.elapsed() >= limit {
+                        #[cfg(unix)]
+                        unsafe {
+                            libc::kill(-(child.id() as i32), libc::SIGKILL);
+                        }
+                        #[cfg(windows)]
+                        {
+                            let _ = std::process::Command::new("taskkill")
+                                .args(["/F", "/T", "/PID", &child.id().to_string()])
+                                .stdout(std::process::Stdio::null())
+                                .stderr(std::process::Stdio::null())
+                                .status();
+                        }
                         let _ = child.kill();
                         timed_out = true;
                         break child

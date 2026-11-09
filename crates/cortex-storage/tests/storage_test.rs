@@ -177,3 +177,46 @@ fn test_working_tree_dirty_hash_content_sensitive() {
         "Content modifications must yield distinct dirty hashes"
     );
 }
+
+#[test]
+fn test_read_file_for_scope_staged_vs_working_tree() {
+    let temp = TempDir::new().unwrap();
+    let repo = Repository::init(temp.path()).unwrap();
+
+    let sig = git2::Signature::now("User", "user@example.com").unwrap();
+    let file = temp.path().join("code.rs");
+    fs::write(&file, "pub fn original() {}").unwrap();
+
+    let mut index = repo.index().unwrap();
+    index.add_path(std::path::Path::new("code.rs")).unwrap();
+    let tree_id = index.write_tree().unwrap();
+    index.write().unwrap();
+    let tree = repo.find_tree(tree_id).unwrap();
+    repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+        .unwrap();
+
+    // Stage a new version
+    fs::write(&file, "pub fn staged_version() {}").unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(std::path::Path::new("code.rs")).unwrap();
+    index.write().unwrap();
+
+    // Now modify working tree without staging
+    fs::write(&file, "pub fn unstaged_working_tree_version() {}").unwrap();
+
+    let cortex_repo = CortexRepo::discover(Some(temp.path())).unwrap();
+
+    // Reading with staged_only=true returns staged version
+    let staged_bytes = cortex_repo.read_file_for_scope("code.rs", true).unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&staged_bytes),
+        "pub fn staged_version() {}"
+    );
+
+    // Reading with staged_only=false returns unstaged working tree version
+    let worktree_bytes = cortex_repo.read_file_for_scope("code.rs", false).unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&worktree_bytes),
+        "pub fn unstaged_working_tree_version() {}"
+    );
+}

@@ -113,7 +113,7 @@ pub fn record_invariant(
     Ok(contract)
 }
 
-/// Verify active invariant contracts against specified DiffScope.
+/// Verify active invariant contracts against specified DiffScope (static/advisory check).
 /// Verifies both guarded_symbol itself (catching mutations/deletions) and all upstream dependencies.
 pub fn verify_invariants(
     repo: &CortexRepo,
@@ -122,6 +122,87 @@ pub fn verify_invariants(
 ) -> Result<InvariantVerificationReport> {
     let records = db.list_records_by_kind("INVARIANT")?;
     let events = db.list_records_by_kind("EVENT").unwrap_or_default();
+    verify_records_internal(repo, records, events, scope)
+}
+
+/// Verify invariant contracts against specified DiffScope with optional behavioral test execution.
+/// If an upstream dependency drifted but its verification_test_cmd passes (exit code 0),
+/// the invariant is automatically reaffirmed against the new AST hash.
+pub fn verify_and_reaffirm_invariants(
+    repo: &CortexRepo,
+    db: &mut CortexDb,
+    scope: DiffScope,
+    auto_reaffirm_passing: bool,
+) -> Result<InvariantVerificationReport> {
+    let records = db.list_records_by_kind("INVARIANT")?;
+    let events = db.list_records_by_kind("EVENT").unwrap_or_default();
+    let mut report = verify_records_internal(repo, records, events, scope)?;
+
+    if auto_reaffirm_passing && !report.violations.is_empty() {
+        let mut remaining_violations = Vec::new();
+        for v in report.violations {
+            if !v.verification_test_cmd.trim().is_empty() {
+                if let Ok(0) = run_verification_cmd(&repo.workdir, &v.verification_test_cmd, 30) {
+                    let _ = crate::lifecycle::reaffirm_invariant(
+                        repo,
+                        db,
+                        &v.invariant_id,
+                        "Auto-reaffirmed via passing behavioral verification test",
+                        "git-cortex/pre-commit",
+                    );
+                    continue;
+                }
+            }
+            remaining_violations.push(v);
+        }
+        report.passed = remaining_violations.is_empty();
+        report.violations = remaining_violations;
+    }
+
+    Ok(report)
+}
+
+fn run_verification_cmd(workdir: &Path, cmd_str: &str, timeout_secs: u64) -> Result<i32> {
+    let mut cmd = if cfg!(windows) {
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/C", cmd_str]);
+        c
+    } else {
+        let mut c = std::process::Command::new("sh");
+        c.args(["-c", cmd_str]);
+        c
+    };
+    cmd.current_dir(workdir);
+    cmd.stdout(std::process::Stdio::null());
+    cmd.stderr(std::process::Stdio::null());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| CortexError::Other(format!("Failed to spawn verification test: {}", e)))?;
+
+    let start = std::time::Instant::now();
+    let limit = std::time::Duration::from_secs(timeout_secs);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status.code().unwrap_or(1)),
+            Ok(None) => {
+                if start.elapsed() >= limit {
+                    let _ = child.kill();
+                    return Ok(124);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Err(e) => return Err(CortexError::Other(e.to_string())),
+        }
+    }
+}
+
+fn verify_records_internal(
+    repo: &CortexRepo,
+    records: Vec<cortex_storage::StoredRecord>,
+    events: Vec<cortex_storage::StoredRecord>,
+    scope: DiffScope,
+) -> Result<InvariantVerificationReport> {
     let mut revoked_invariants = std::collections::HashSet::new();
     for evt_rec in events {
         if let Ok(evt) = serde_json::from_str::<cortex_core::schema::LifecycleEvent>(&evt_rec.json)
@@ -246,16 +327,9 @@ fn read_symbols_by_scope(
             }
         }
         DiffScope::Staged => {
-            let index = repo
-                .repo
-                .index()
-                .map_err(|e| CortexError::Git(e.to_string()))?;
-            if let Some(entry) = index.get_path(Path::new(rel_path), 0) {
-                let blob = repo
-                    .repo
-                    .find_blob(entry.id)
-                    .map_err(|e| CortexError::Git(e.to_string()))?;
-                repo.extract_symbols_cached(Path::new(rel_path), blob.content())
+            let src = repo.read_file_for_scope(rel_path, true)?;
+            if !src.is_empty() {
+                repo.extract_symbols_cached(Path::new(rel_path), &src)
             } else if let Ok(head_tree) = repo.repo.head().and_then(|h| h.peel_to_tree()) {
                 if let Ok(tree_entry) = head_tree.get_path(Path::new(rel_path)) {
                     let blob = repo

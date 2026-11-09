@@ -49,6 +49,27 @@ impl CortexRepo {
         self.symbol_cache.get_or_extract(path, content)
     }
 
+    /// Read file content for a given relative path and staging scope.
+    /// If staged_only is true, attempts to read directly from the git index blob;
+    /// otherwise reads from the working tree on disk.
+    pub fn read_file_for_scope(&self, rel_path: &str, staged_only: bool) -> Result<Vec<u8>> {
+        if staged_only {
+            if let Ok(index) = self.repo.index() {
+                if let Some(entry) = index.get_path(Path::new(rel_path), 0) {
+                    if let Ok(blob) = self.repo.find_blob(entry.id) {
+                        return Ok(blob.content().to_vec());
+                    }
+                }
+            }
+        }
+        let full_path = self.workdir.join(rel_path);
+        if full_path.exists() {
+            std::fs::read(&full_path).map_err(CortexError::Io)
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
     /// Resolve primary .git common directory, supporting linked Git worktrees
     pub fn resolve_commondir(repo: &Repository) -> PathBuf {
         let git_dir = repo.path();

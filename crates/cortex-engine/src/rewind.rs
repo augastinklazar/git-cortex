@@ -49,6 +49,17 @@ pub fn rewind_to_checkpoint(
         )
     };
 
+    // Step 1b: Stash untracked working-tree files under refs/cortex/untracked/<id>
+    // so newly created files are never lost during an automated agent rewind
+    let _ = CortexSnapshot::create_snapshot(
+        &repo.repo,
+        "untracked",
+        checkpoint_id,
+        "Untracked files stashed prior to rewind",
+        "git-cortex",
+        "cortex@git-cortex.dev",
+    );
+
     // Step 2: Restore working tree and index cleanly to checkpoint
     CortexSnapshot::restore_snapshot(&repo.repo, &checkpoint_ref)?;
 

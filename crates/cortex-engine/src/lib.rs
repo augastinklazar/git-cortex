@@ -15,7 +15,8 @@ pub use handoff::{
 };
 pub use inspect::{inspect_symbol, InspectResult};
 pub use invariant::{
-    record_invariant, verify_invariants, DiffScope, InvariantVerificationReport, InvariantViolation,
+    record_invariant, verify_and_reaffirm_invariants, verify_invariants, DiffScope,
+    InvariantVerificationReport, InvariantViolation,
 };
 pub use lifecycle::{reaffirm_invariant, revoke_record};
 pub use promote::promote_local_records;
