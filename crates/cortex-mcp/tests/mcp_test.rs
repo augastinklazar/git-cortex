@@ -318,3 +318,76 @@ fn test_mcp_checkpoint_validation_errors() {
         .unwrap()
         .contains("Invalid 'active_hypotheses'"));
 }
+
+#[test]
+fn test_mcp_server_dual_mode_header_and_ndjson_framing() {
+    let temp = TempDir::new().unwrap();
+    let repo = Repository::init(temp.path()).unwrap();
+    let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+
+    let file = temp.path().join("main.rs");
+    fs::write(&file, "fn main() {}\n").unwrap();
+
+    let mut index = repo.index().unwrap();
+    index.add_path(std::path::Path::new("main.rs")).unwrap();
+    let tree_id = index.write_tree().unwrap();
+    let tree = repo.find_tree(tree_id).unwrap();
+    repo.commit(Some("HEAD"), &sig, &sig, "Initial", &tree, &[])
+        .unwrap();
+
+    let cortex_repo = CortexRepo::discover(Some(temp.path())).unwrap();
+    let db = CortexDb::open_in_memory().unwrap();
+    let mut server = McpServer::new(cortex_repo, db);
+
+    // 1. Send Content-Length header framed request
+    let init_req = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {}
+    });
+    let init_json = serde_json::to_string(&init_req).unwrap();
+    let mut input = format!("Content-Length: {}\r\n\r\n{}", init_json.len(), init_json);
+
+    // 2. Intermix with NDJSON framed ping request
+    let ping_req = json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "ping"
+    });
+    input.push_str(&format!(
+        "\n{}\n",
+        serde_json::to_string(&ping_req).unwrap()
+    ));
+
+    let mut output = Vec::new();
+    server.run_stdio(Cursor::new(input.into_bytes()), &mut output);
+
+    let output_str = String::from_utf8(output).unwrap();
+
+    // Verify first response is Content-Length header framed
+    assert!(
+        output_str.starts_with("Content-Length:"),
+        "Header-framed request must yield header-framed response"
+    );
+
+    let header_prefix = "Content-Length:";
+    let header_end = output_str
+        .find("\r\n\r\n")
+        .expect("Must contain header delimiter");
+    let len_str = output_str[header_prefix.len()..header_end].trim();
+    let body_len: usize = len_str.parse().expect("Valid Content-Length integer");
+
+    let body_start = header_end + 4;
+    let body_end = body_start + body_len;
+    let first_json = &output_str[body_start..body_end];
+
+    let resp1: serde_json::Value = serde_json::from_str(first_json).unwrap();
+    assert_eq!(resp1["id"], 1);
+    assert_eq!(resp1["result"]["serverInfo"]["name"], "git-cortex");
+
+    // Verify second response is standard NDJSON
+    let remainder = &output_str[body_end..].trim();
+    let resp2: serde_json::Value = serde_json::from_str(remainder).unwrap();
+    assert_eq!(resp2["id"], 2);
+}

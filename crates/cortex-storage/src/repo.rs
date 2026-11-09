@@ -159,4 +159,26 @@ impl CortexRepo {
             Ok(format!("wt:sha256:{}", &digest[..16]))
         }
     }
+
+    /// Return relative paths of all dirty, staged, or untracked files
+    pub fn dirty_files(&self) -> Result<Vec<String>> {
+        let mut status_opts = git2::StatusOptions::new();
+        status_opts
+            .include_untracked(true)
+            .include_ignored(false)
+            .recurse_untracked_dirs(true);
+
+        let statuses = self
+            .repo
+            .statuses(Some(&mut status_opts))
+            .map_err(|e| CortexError::Git(format!("Failed to get repository status: {}", e)))?;
+
+        let mut files = Vec::new();
+        for entry in statuses.iter() {
+            if let Some(path) = entry.path() {
+                files.push(path.to_string());
+            }
+        }
+        Ok(files)
+    }
 }

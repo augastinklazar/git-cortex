@@ -187,7 +187,8 @@ fn walk_and_extract(
         }
 
         // --- TypeScript / JavaScript ---
-        (Language::TypeScript | Language::Tsx | Language::JavaScript, "function_declaration") => {
+        (Language::TypeScript | Language::Tsx | Language::JavaScript, "function_declaration")
+        | (Language::TypeScript | Language::Tsx, "function_signature") => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 if let Ok(name) = name_node.utf8_text(source) {
                     let scope = build_scope(scope_stack, name, sep);
@@ -445,11 +446,15 @@ fn record_symbol(
 fn disambiguate_scope(existing: &[Symbol], scope: &str) -> String {
     let count = existing
         .iter()
-        .filter(|s| s.scope_chain == scope || s.scope_chain.starts_with(&format!("{}@", scope)))
+        .filter(|s| {
+            s.scope_chain == scope
+                || s.scope_chain.starts_with(&format!("{}[", scope))
+                || s.scope_chain.starts_with(&format!("{}@", scope))
+        })
         .count();
     if count == 0 {
         scope.to_string()
     } else {
-        format!("{}@{}", scope, count + 1)
+        format!("{}[{}]", scope, count + 1)
     }
 }

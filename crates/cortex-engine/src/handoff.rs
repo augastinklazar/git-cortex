@@ -31,7 +31,7 @@ pub fn create_handoff_envelope(
         .unwrap_or("Active development task")
         .to_string();
 
-    let mut envelope = EpistemicHandoff::new(handoff_id, head_sha, dirty_hash, objective);
+    let mut envelope = EpistemicHandoff::new(handoff_id, head_sha, dirty_hash, objective.clone());
 
     // Filter out revoked records via LifecycleEvent
     let mut revoked_ids = std::collections::HashSet::new();
@@ -47,17 +47,114 @@ pub fn create_handoff_envelope(
         }
     }
 
-    // Populate active tombstone IDs (excluding revoked tombstones)
-    let tombstones = db.list_records_by_kind("TOMBSTONE")?;
-    for t in &tombstones {
-        if !revoked_ids.contains(&t.id) {
-            envelope.active_tombstone_ids.push(t.id.clone());
-        }
-    }
-
     // Populate edges & hypotheses
     envelope.verified_call_graph = db.get_call_graph_edges(&branch)?;
     envelope.active_hypotheses = db.get_hypotheses(&branch)?;
+
+    // Salience ranking for candidate tombstones (Advancement 4.6):
+    // Salience(r) = 0.50 * GraphProximity + 0.35 * NormalizedBM25 + 0.15 * AgeDecay
+    let dirty_files = repo.dirty_files().unwrap_or_default();
+    let mut dirty_symbols = std::collections::HashSet::new();
+    for f in &dirty_files {
+        let p = std::path::Path::new(f);
+        if let Ok(bytes) = repo.read_file_for_scope(f, false) {
+            if let Ok(syms) = repo.extract_symbols_cached(p, &bytes) {
+                for s in syms {
+                    dirty_symbols.insert(s.uri);
+                }
+            }
+        }
+    }
+
+    let mut one_hop = std::collections::HashSet::new();
+    let mut two_hop = std::collections::HashSet::new();
+    for edge in &envelope.verified_call_graph {
+        if dirty_symbols.contains(&edge.caller) {
+            one_hop.insert(edge.callee.clone());
+        }
+        if dirty_symbols.contains(&edge.callee) {
+            one_hop.insert(edge.caller.clone());
+        }
+    }
+    for edge in &envelope.verified_call_graph {
+        if one_hop.contains(&edge.caller) && !dirty_symbols.contains(&edge.callee) {
+            two_hop.insert(edge.callee.clone());
+        }
+        if one_hop.contains(&edge.callee) && !dirty_symbols.contains(&edge.caller) {
+            two_hop.insert(edge.caller.clone());
+        }
+    }
+
+    let objective_tokens: Vec<String> = objective
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() >= 3)
+        .map(|w| w.to_lowercase())
+        .collect();
+
+    // Populate active tombstone IDs ranked by composite salience
+    let tombstones = db.list_records_by_kind("TOMBSTONE")?;
+    let mut scored_tombstones = Vec::new();
+    for t in tombstones {
+        if revoked_ids.contains(&t.id) {
+            continue;
+        }
+
+        let record_opt = serde_json::from_str::<cortex_core::schema::TombstoneRecord>(&t.json).ok();
+        let target_symbols = record_opt
+            .as_ref()
+            .map(|r| r.target_symbols.as_slice())
+            .unwrap_or(&[]);
+
+        // 1. Graph proximity score
+        let mut prox_score = 0.1f64;
+        for sym in target_symbols {
+            if dirty_symbols.contains(&sym.symbol_uri) {
+                prox_score = prox_score.max(1.0);
+            } else if one_hop.contains(&sym.symbol_uri) {
+                prox_score = prox_score.max(0.7);
+            } else if two_hop.contains(&sym.symbol_uri) {
+                prox_score = prox_score.max(0.3);
+            }
+        }
+
+        // 2. Normalized BM25 / Keyword matching
+        let mut match_count = 0usize;
+        if let Some(ref r) = record_opt {
+            let sym_names = r
+                .target_symbols
+                .iter()
+                .map(|s| s.symbol_uri.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let searchable = format!(
+                "{} {} {} {}",
+                r.failure_reason,
+                r.attempted_approach,
+                r.verification_evidence.error_signature,
+                sym_names
+            )
+            .to_lowercase();
+            for tok in &objective_tokens {
+                if searchable.contains(tok) {
+                    match_count += 1;
+                }
+            }
+        }
+        let bm25_score = if objective_tokens.is_empty() {
+            0.5
+        } else {
+            (match_count as f64 / objective_tokens.len() as f64).min(1.0)
+        };
+
+        // 3. Age decay
+        let decay_score = 1.0f64;
+
+        let salience = 0.50 * prox_score + 0.35 * bm25_score + 0.15 * decay_score;
+        scored_tombstones.push((t.id, salience));
+    }
+
+    scored_tombstones.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    envelope.active_tombstone_ids = scored_tombstones.into_iter().map(|(id, _)| id).collect();
 
     // Populate unchanged files
     let reads = db.get_file_reads(&branch)?;
@@ -141,9 +238,9 @@ fn enforce_byte_budget(envelope: &mut EpistemicHandoff, max_bytes: usize) -> Res
         return Ok(());
     }
 
-    // Tier 5: Truncate active tombstone IDs (oldest first, preserving recent negative knowledge)
+    // Tier 5: Truncate active tombstone IDs (lowest salience first, preserving high-salience negative knowledge)
     while json.len() > max_bytes && !envelope.active_tombstone_ids.is_empty() {
-        envelope.active_tombstone_ids.remove(0);
+        envelope.active_tombstone_ids.pop();
         json = serde_json::to_string(envelope).map_err(CortexError::Json)?;
     }
     if json.len() <= max_bytes {

@@ -26,28 +26,35 @@ impl McpServer {
         }
     }
 
-    pub fn run_stdio<R: BufRead, W: Write>(&mut self, reader: R, mut writer: W) {
-        for line in reader.lines() {
-            let line = match line {
-                Ok(l) => l,
+    pub fn run_stdio<R: BufRead, W: Write>(&mut self, mut reader: R, mut writer: W) {
+        loop {
+            let (payload, is_header_framed) = match read_next_rpc_message(&mut reader) {
+                Ok(Some(msg)) => msg,
+                Ok(None) => break,
                 Err(e) => {
                     eprintln!("cortex-mcp: stdin error: {}", e);
                     break;
                 }
             };
 
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            let req: JsonRpcRequest = match serde_json::from_str(trimmed) {
+            let req: JsonRpcRequest = match serde_json::from_slice(&payload) {
                 Ok(r) => r,
                 Err(e) => {
                     let err_resp =
                         JsonRpcResponse::error(None, -32700, format!("Parse error: {}", e));
-                    let _ = writeln!(writer, "{}", serde_json::to_string(&err_resp).unwrap());
-                    let _ = writer.flush();
+                    if let Ok(err_str) = serde_json::to_string(&err_resp) {
+                        if is_header_framed {
+                            let _ = write!(
+                                writer,
+                                "Content-Length: {}\r\n\r\n{}",
+                                err_str.len(),
+                                err_str
+                            );
+                        } else {
+                            let _ = writeln!(writer, "{}", err_str);
+                        }
+                        let _ = writer.flush();
+                    }
                     continue;
                 }
             };
@@ -55,7 +62,16 @@ impl McpServer {
             let resp = self.handle_request(&req);
             if let Some(r) = resp {
                 if let Ok(json_str) = serde_json::to_string(&r) {
-                    let _ = writeln!(writer, "{}", json_str);
+                    if is_header_framed {
+                        let _ = write!(
+                            writer,
+                            "Content-Length: {}\r\n\r\n{}",
+                            json_str.len(),
+                            json_str
+                        );
+                    } else {
+                        let _ = writeln!(writer, "{}", json_str);
+                    }
                     let _ = writer.flush();
                 }
             }
@@ -366,5 +382,42 @@ impl McpServer {
             }
             _ => ToolResult::error(format!("Unknown tool: {}", name)),
         }
+    }
+}
+
+pub fn read_next_rpc_message<R: BufRead>(
+    reader: &mut R,
+) -> std::io::Result<Option<(Vec<u8>, bool)>> {
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let bytes_read = reader.read_line(&mut line)?;
+        if bytes_read == 0 {
+            return Ok(None);
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(len_str) = trimmed
+            .strip_prefix("Content-Length:")
+            .or_else(|| trimmed.strip_prefix("content-length:"))
+        {
+            let byte_len: usize = len_str
+                .trim()
+                .parse()
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            loop {
+                line.clear();
+                reader.read_line(&mut line)?;
+                if line.trim().is_empty() {
+                    break;
+                }
+            }
+            let mut buf = vec![0u8; byte_len];
+            reader.read_exact(&mut buf)?;
+            return Ok(Some((buf, true)));
+        }
+        return Ok(Some((trimmed.as_bytes().to_vec(), false)));
     }
 }
