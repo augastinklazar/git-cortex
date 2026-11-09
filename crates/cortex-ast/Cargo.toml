@@ -8,6 +8,7 @@ description = "Tree-sitter symbol extraction and normalized AST hashing for git-
 
 [dependencies]
 cortex-core.workspace = true
+serde.workspace = true
 tree-sitter.workspace = true
 tree-sitter-typescript.workspace = true
 tree-sitter-javascript.workspace = true
