@@ -1,3 +1,7 @@
-pub fn mcp_version() -> &'static str {
-    "0.1.0"
-}
+pub mod protocol;
+pub mod server;
+pub mod tools;
+
+pub use protocol::{JsonRpcRequest, JsonRpcResponse, ToolContent, ToolResult};
+pub use server::McpServer;
+pub use tools::list_tools;
