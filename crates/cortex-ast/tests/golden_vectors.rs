@@ -65,6 +65,7 @@ export class TokenManager {
 
     // Ast hash MUST be invariant to comments!
     assert_eq!(method1.ast_hash, method2.ast_hash);
+    assert_eq!(method1.ast_hash, "ast:sha256:c598f2edad555974");
 }
 
 #[test]
@@ -101,6 +102,7 @@ impl ConnectionPool {
         "src/pool/connection.rs#ConnectionPool::acquire"
     );
     assert_eq!(method1.ast_hash, method2.ast_hash);
+    assert_eq!(method1.ast_hash, "ast:sha256:b8b19958c0db01b6");
 }
 
 #[test]
@@ -133,6 +135,7 @@ class Worker:
         .unwrap();
 
     assert_eq!(method1.ast_hash, method2.ast_hash);
+    assert_eq!(method1.ast_hash, "ast:sha256:3ddbef0a5ba9c4ef");
 }
 
 #[test]
@@ -158,6 +161,7 @@ func (w *Worker) Dispatch(job string) error {
 
     assert_eq!(dispatch.uri, "pkg/queue/worker.go#Worker.Dispatch");
     assert_eq!(dispatch.kind, SymbolKind::Method);
+    assert_eq!(dispatch.ast_hash, "ast:sha256:cac2b372440dc329");
 }
 
 #[test]
@@ -241,4 +245,95 @@ impl From<i32> for MyType {
     assert!(
         scopes.contains(&"MyType<as From>::from") || scopes.contains(&"MyType<as From>::from@2")
     );
+}
+
+#[test]
+fn test_python_decorator_and_async_generator() {
+    let py_src = br#"
+@retry(attempts=3)
+@instrument(name="event_stream")
+async def stream_events(topic: str, batch_size: int = 100):
+    """Docstring explaining async event stream generation."""
+    async for message in fetch_stream(topic):
+        yield transform(message, batch_size)
+"#;
+    let syms = extract_symbols(Path::new("services/stream.py"), py_src).unwrap();
+    assert_eq!(syms.len(), 1);
+    let func = &syms[0];
+    assert_eq!(func.scope_chain, "stream_events");
+    assert_eq!(func.kind, SymbolKind::Function);
+    assert_eq!(func.ast_hash, "ast:sha256:3dea939e0746a15d");
+}
+
+#[test]
+fn test_typescript_namespace_and_interface() {
+    let ts_src = br#"
+export namespace Security {
+    export interface AuthConfig {
+        tokenExpirySecs: number;
+    }
+
+    export class KeyStore {
+        async fetchKey(keyId: string): Promise<string> {
+            return keyId;
+        }
+    }
+}
+"#;
+    let syms = extract_symbols(Path::new("src/security/vault.ts"), ts_src).unwrap();
+    assert_eq!(syms.len(), 3);
+
+    let iface = syms.iter().find(|s| s.scope_chain == "AuthConfig").unwrap();
+    assert_eq!(iface.kind, SymbolKind::Interface);
+    assert_eq!(iface.ast_hash, "ast:sha256:4014a2375fe9870f");
+
+    let cls = syms.iter().find(|s| s.scope_chain == "KeyStore").unwrap();
+    assert_eq!(cls.kind, SymbolKind::Class);
+    assert_eq!(cls.ast_hash, "ast:sha256:2745cb6623b6cf69");
+
+    let meth = syms
+        .iter()
+        .find(|s| s.scope_chain == "KeyStore.fetchKey")
+        .unwrap();
+    assert_eq!(meth.kind, SymbolKind::Method);
+    assert_eq!(meth.ast_hash, "ast:sha256:9ae7ad335ac3ea4e");
+}
+
+#[test]
+fn test_rust_trait_impl_associated_types() {
+    let rs_src = br#"
+pub trait Transformer<T> {
+    type Output;
+    fn transform(&self, input: T) -> Self::Output;
+}
+
+pub struct Upper;
+
+impl Transformer<&str> for Upper {
+    type Output = String;
+    fn transform(&self, input: &str) -> Self::Output {
+        input.to_uppercase()
+    }
+}
+"#;
+    let syms = extract_symbols(Path::new("src/transform.rs"), rs_src).unwrap();
+    assert_eq!(syms.len(), 3);
+
+    let trt = syms
+        .iter()
+        .find(|s| s.scope_chain == "Transformer")
+        .unwrap();
+    assert_eq!(trt.kind, SymbolKind::Trait);
+    assert_eq!(trt.ast_hash, "ast:sha256:e4fc1bd3cb25f710");
+
+    let st = syms.iter().find(|s| s.scope_chain == "Upper").unwrap();
+    assert_eq!(st.kind, SymbolKind::Struct);
+    assert_eq!(st.ast_hash, "ast:sha256:8c07bf1974d88d36");
+
+    let mth = syms
+        .iter()
+        .find(|s| s.scope_chain == "Upper<as Transformer>::transform")
+        .unwrap();
+    assert_eq!(mth.kind, SymbolKind::Method);
+    assert_eq!(mth.ast_hash, "ast:sha256:e09169e88fe8e43b");
 }
