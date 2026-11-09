@@ -4,14 +4,20 @@ use cortex_storage::{CortexDb, CortexLedger, CortexRepo, LedgerRecord};
 pub fn promote_local_records(repo: &CortexRepo, db: &mut CortexDb) -> Result<usize> {
     let unpromoted = db.list_records_by_kind("TOMBSTONE")?;
     let unpromoted_invariants = db.list_records_by_kind("INVARIANT")?;
+    let unpromoted_events = db.list_records_by_kind("EVENT")?;
 
     let mut ledger_records = Vec::new();
 
-    for r in unpromoted.iter().chain(unpromoted_invariants.iter()) {
+    for r in unpromoted
+        .iter()
+        .chain(unpromoted_invariants.iter())
+        .chain(unpromoted_events.iter())
+    {
         if !r.promoted {
             let kind_dir = match r.kind.as_str() {
                 "TOMBSTONE" => "tombstones",
                 "INVARIANT" => "invariants",
+                "EVENT" => "events",
                 _ => "events",
             };
 
