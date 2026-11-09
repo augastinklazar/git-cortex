@@ -222,3 +222,99 @@ fn test_mcp_server_full_stdio_lifecycle() {
         .unwrap()
         .contains("verified successfully"));
 }
+
+#[test]
+fn test_mcp_notification_emits_no_response() {
+    let temp = TempDir::new().unwrap();
+    let _repo = Repository::init(temp.path()).unwrap();
+    let cortex_repo = CortexRepo::discover(Some(temp.path())).unwrap();
+    let db = CortexDb::open_in_memory().unwrap();
+    let mut server = McpServer::new(cortex_repo, db);
+
+    let requests = vec![
+        json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": {}
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "method": "custom/unknown_notification",
+            "params": {}
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "ping",
+            "params": {}
+        }),
+    ];
+
+    let mut input_data = Vec::new();
+    for req in requests {
+        input_data.extend(serde_json::to_vec(&req).unwrap());
+        input_data.push(b'\n');
+    }
+
+    let mut output_data = Vec::new();
+    server.run_stdio(Cursor::new(input_data), &mut output_data);
+
+    let output_str = String::from_utf8(output_data).unwrap();
+    let lines: Vec<&str> = output_str.lines().collect();
+
+    // Only the 'ping' request with id 1 should produce a response
+    assert_eq!(lines.len(), 1);
+    let ping_resp: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(ping_resp["id"], 1);
+}
+
+#[test]
+fn test_mcp_checkpoint_validation_errors() {
+    let temp = TempDir::new().unwrap();
+    let repo = Repository::init(temp.path()).unwrap();
+    let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+    let tree_id = repo.index().unwrap().write_tree().unwrap();
+    let tree = repo.find_tree(tree_id).unwrap();
+    repo.commit(Some("HEAD"), &sig, &sig, "Init", &tree, &[])
+        .unwrap();
+
+    let cortex_repo = CortexRepo::discover(Some(temp.path())).unwrap();
+    let db = CortexDb::open_in_memory().unwrap();
+    let mut server = McpServer::new(cortex_repo, db);
+
+    // Call checkpoint with invalid confidence (> 1.0)
+    let req = json!({
+        "jsonrpc": "2.0",
+        "id": 10,
+        "method": "tools/call",
+        "params": {
+            "name": "cortex_checkpoint_state",
+            "arguments": {
+                "objective": "Test checkpoint validation",
+                "active_hypotheses": [
+                    {
+                        "hypothesis_id": "hyp_1",
+                        "statement": "Test hyp",
+                        "confidence": 1.5,
+                        "status": "TESTING",
+                        "next_verification_step": "Step 1"
+                    }
+                ]
+            }
+        }
+    });
+
+    let mut input_data = serde_json::to_vec(&req).unwrap();
+    input_data.push(b'\n');
+    let mut output_data = Vec::new();
+    server.run_stdio(Cursor::new(input_data), &mut output_data);
+
+    let output_str = String::from_utf8(output_data).unwrap();
+    let resp: serde_json::Value = serde_json::from_str(output_str.trim()).unwrap();
+    assert_eq!(resp["id"], 10);
+    assert_eq!(resp["result"]["isError"], true);
+    assert!(resp["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Invalid 'active_hypotheses'"));
+}

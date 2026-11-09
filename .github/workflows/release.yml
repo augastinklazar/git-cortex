@@ -67,7 +67,7 @@ jobs:
           cd target/${{ matrix.target }}/release
           tar -czf ../../../${{ matrix.asset_name }} ${{ matrix.binary_name }}
           cd ../../..
-          shasum -a 256 ${{ matrix.asset_name }} > ${{ matrix.asset_name }}.sha256
+          sha256sum ${{ matrix.asset_name }} > ${{ matrix.asset_name }}.sha256
         shell: bash
 
       - name: Package archive (Windows)
@@ -76,7 +76,7 @@ jobs:
           cd target/${{ matrix.target }}/release
           7z a ../../../${{ matrix.asset_name }} ${{ matrix.binary_name }}
           cd ../../..
-          certutil -hashfile ${{ matrix.asset_name }} SHA256 > ${{ matrix.asset_name }}.sha256
+          sha256sum ${{ matrix.asset_name }} > ${{ matrix.asset_name }}.sha256
         shell: bash
 
       - name: Upload binary asset

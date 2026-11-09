@@ -532,6 +532,7 @@ impl CortexDb {
                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                 ON CONFLICT(id) DO UPDATE SET
                     state = excluded.state,
+                    symbols_json = excluded.symbols_json,
                     diff = excluded.diff,
                     exec_ids = excluded.exec_ids
                 "#,

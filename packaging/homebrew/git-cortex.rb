@@ -11,7 +11,6 @@ class GitCortex < Formula
 
   def install
     system "cargo", "install", *std_cargo_args(path: "crates/cortex-cli")
-    bin.install_symlink bin/"cortex" => "git-cortex"
   end
 
   test do
