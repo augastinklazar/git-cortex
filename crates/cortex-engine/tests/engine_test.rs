@@ -590,3 +590,63 @@ fn test_rewind_untracked_files_preserved_in_snapshot() {
         "Untracked file must be preserved in untracked snapshot commit"
     );
 }
+
+#[test]
+fn test_handoff_salience_ranking_prioritizes_relevant_tombstones() {
+    let (_temp, repo, mut db) = setup_repo();
+
+    // Record tombstone 1: unrelated background failure
+    let t1 = record_tombstone(
+        &repo,
+        &mut db,
+        RecordTombstoneParams {
+            target_symbols: &["src/network.rs#Socket::connect".to_string()],
+            attempted_approach: "Tried blocking socket connect without timeout",
+            failure_reason: "Connection refused on localhost",
+            test_command: "cargo test",
+            error_signature: "ECONNREFUSED",
+            author_harness: "agent/1",
+            capture_mode: CaptureMode::Manual,
+        },
+    )
+    .unwrap();
+
+    // Record tombstone 2: specifically matches task objective
+    let t2 = record_tombstone(
+        &repo,
+        &mut db,
+        RecordTombstoneParams {
+            target_symbols: &["src/calc.rs#Calc::add".to_string()],
+            attempted_approach: "Refactored parser recursion",
+            failure_reason: "Recursion depth exceeded during syntax parsing",
+            test_command: "cargo test",
+            error_signature: "StackOverflow in parser",
+            author_harness: "agent/1",
+            capture_mode: CaptureMode::Manual,
+        },
+    )
+    .unwrap();
+
+    let envelope =
+        create_handoff_envelope(&repo, &db, None, Some("Debug syntax parser stack overflow"))
+            .unwrap();
+
+    assert!(envelope.active_tombstone_ids.contains(&t1.id));
+    assert!(envelope.active_tombstone_ids.contains(&t2.id));
+
+    // t2 has higher salience for "parser stack overflow", so must appear ahead of t1
+    let pos_t2 = envelope
+        .active_tombstone_ids
+        .iter()
+        .position(|id| id == &t2.id)
+        .unwrap();
+    let pos_t1 = envelope
+        .active_tombstone_ids
+        .iter()
+        .position(|id| id == &t1.id)
+        .unwrap();
+    assert!(
+        pos_t2 < pos_t1,
+        "High-salience tombstone t2 must be ranked ahead of lower-salience t1"
+    );
+}
