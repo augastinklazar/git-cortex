@@ -67,6 +67,8 @@ enum Commands {
 
     /// Execute a test or build command with passive capture (Edit -> Fail -> Revert detector)
     Exec {
+        #[arg(short, long, default_value_t = 0)]
+        timeout: u64,
         #[arg(trailing_var_arg = true, required = true)]
         command: Vec<String>,
     },
@@ -314,8 +316,9 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Commands::Exec { command } => {
-            let exit_code = execute_command(&repo, &mut db, &command)?;
+        Commands::Exec { timeout, command } => {
+            let timeout_opt = if timeout > 0 { Some(timeout) } else { None };
+            let exit_code = execute_command(&repo, &mut db, &command, timeout_opt)?;
             std::process::exit(exit_code);
         }
         Commands::Tombstone { action } => match action {

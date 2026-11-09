@@ -32,6 +32,20 @@ pub struct Symbol {
 
 pub fn extract_symbols(rel_path: &Path, source: &[u8]) -> Result<Vec<Symbol>> {
     let norm_path = normalize_rel_path(rel_path);
+
+    // Skip binary files (null bytes) and files > 2 MB
+    if source.len() > 2 * 1024 * 1024 || source[..source.len().min(1024)].contains(&0) {
+        let hash = cortex_core::jcs::sha256_digest(source);
+        return Ok(vec![Symbol {
+            uri: format_symbol_uri(&norm_path, "<binary>"),
+            scope_chain: "<binary>".to_string(),
+            kind: SymbolKind::File,
+            ast_hash: format!("ast:sha256:{}", &hash[..16]),
+            byte_range: 0..source.len(),
+            line_range: 1..2,
+        }]);
+    }
+
     let lang = Language::from_path(rel_path);
 
     if !lang.is_supported() {
@@ -338,12 +352,27 @@ fn record_symbol(
     let start_pos = node.start_position();
     let end_pos = node.end_position();
 
+    // Disambiguate duplicate/overloaded symbol scopes with ordinal suffix
+    let final_scope = disambiguate_scope(symbols, &scope_chain);
+
     symbols.push(Symbol {
-        uri: format_symbol_uri(rel_path, &scope_chain),
-        scope_chain,
+        uri: format_symbol_uri(rel_path, &final_scope),
+        scope_chain: final_scope,
         kind,
         ast_hash,
         byte_range: node.byte_range(),
         line_range: (start_pos.row as u32 + 1)..(end_pos.row as u32 + 2),
     });
+}
+
+fn disambiguate_scope(existing: &[Symbol], scope: &str) -> String {
+    let count = existing
+        .iter()
+        .filter(|s| s.scope_chain == scope || s.scope_chain.starts_with(&format!("{}@", scope)))
+        .count();
+    if count == 0 {
+        scope.to_string()
+    } else {
+        format!("{}@{}", scope, count + 1)
+    }
 }

@@ -9,7 +9,12 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Instant;
 
-pub fn execute_command(repo: &CortexRepo, db: &mut CortexDb, cmd_args: &[String]) -> Result<i32> {
+pub fn execute_command(
+    repo: &CortexRepo,
+    db: &mut CortexDb,
+    cmd_args: &[String],
+    timeout_secs: Option<u64>,
+) -> Result<i32> {
     if cmd_args.is_empty() {
         return Err(CortexError::Other("Empty command specified".to_string()));
     }
@@ -26,7 +31,7 @@ pub fn execute_command(repo: &CortexRepo, db: &mut CortexDb, cmd_args: &[String]
     let prog = &cmd_args[0];
     let args = &cmd_args[1..];
 
-    let child = Command::new(prog)
+    let mut child = Command::new(prog)
         .args(args)
         .current_dir(&repo.workdir)
         .stdout(Stdio::piped())
@@ -34,12 +39,38 @@ pub fn execute_command(repo: &CortexRepo, db: &mut CortexDb, cmd_args: &[String]
         .spawn()
         .map_err(|e| CortexError::Other(format!("Failed to spawn command '{}': {}", prog, e)))?;
 
+    let timeout_duration = timeout_secs
+        .filter(|&t| t > 0)
+        .map(std::time::Duration::from_secs);
+    let mut timed_out = false;
+
+    if let Some(limit) = timeout_duration {
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) => {
+                    if start_time.elapsed() >= limit {
+                        let _ = child.kill();
+                        timed_out = true;
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(_) => break,
+            }
+        }
+    }
+
     let output = child
         .wait_with_output()
         .map_err(|e| CortexError::Other(format!("Failed to wait on command '{}': {}", prog, e)))?;
 
     let duration_ms = start_time.elapsed().as_millis() as i64;
-    let exit_code = output.status.code().unwrap_or(1);
+    let exit_code = if timed_out {
+        124
+    } else {
+        output.status.code().unwrap_or(1)
+    };
 
     let stdout_str = String::from_utf8_lossy(&output.stdout);
     let stderr_str = String::from_utf8_lossy(&output.stderr);
@@ -66,7 +97,7 @@ pub fn execute_command(repo: &CortexRepo, db: &mut CortexDb, cmd_args: &[String]
 
     db.insert_exec(&StoredExec {
         id: exec_id.clone(),
-        cmd: cmd_str,
+        cmd: cmd_str.clone(),
         exit_code,
         signature: signature.clone(),
         output_tail: tail_bytes,
@@ -75,27 +106,41 @@ pub fn execute_command(repo: &CortexRepo, db: &mut CortexDb, cmd_args: &[String]
         duration_ms,
     })?;
 
-    // 3. If failed and symbols were touched, register candidate
+    // 3. If failed and symbols were touched, verify this wasn't an existing baseline failure
     if exit_code != 0 && !touched_symbols.is_empty() {
-        let cand_id = PrefixedId::new(IdPrefix::Candidate).to_string();
-        let sym_json = serde_json::to_string(&touched_symbols).unwrap_or_default();
-        let diff_summary = format!("{} symbols modified", touched_symbols.len());
+        let is_baseline_failure = check_baseline_failure(db, &cmd_str, &signature)?;
 
-        db.save_candidate(&StoredCandidate {
-            id: cand_id,
-            state: "FAILED".to_string(),
-            base_commit: base_sha,
-            symbols_json: sym_json,
-            diff: diff_summary,
-            exec_ids: exec_id,
-            created_at: chrono::Utc::now().to_rfc3339(),
-        })?;
+        if !is_baseline_failure {
+            let cand_id = PrefixedId::new(IdPrefix::Candidate).to_string();
+            let sym_json = serde_json::to_string(&touched_symbols).unwrap_or_default();
+            let diff_summary = format!("{} symbols modified", touched_symbols.len());
+
+            db.save_candidate(&StoredCandidate {
+                id: cand_id,
+                state: "FAILED".to_string(),
+                base_commit: base_sha,
+                symbols_json: sym_json,
+                diff: diff_summary,
+                exec_ids: exec_id,
+                created_at: chrono::Utc::now().to_rfc3339(),
+            })?;
+        }
     }
 
     // 4. Run reconcile pass (checks if any previously failed candidates have reverted!)
     let _ = reconcile_candidates(repo, db);
 
     Ok(exit_code)
+}
+
+fn check_baseline_failure(db: &CortexDb, cmd: &str, signature: &str) -> Result<bool> {
+    let past_execs = db.get_execs_by_cmd_and_signature(cmd, signature)?;
+    for exec in past_execs {
+        if exec.tree_hash == "wt:clean" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn find_dirty_symbols(repo: &CortexRepo) -> Result<Vec<TouchedSymbol>> {
