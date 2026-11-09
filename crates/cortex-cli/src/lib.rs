@@ -15,7 +15,7 @@ use cortex_engine::inspect::inspect_symbol;
 use cortex_engine::invariant::{record_invariant, verify_invariants, DiffScope};
 use cortex_engine::promote::promote_local_records;
 use cortex_engine::rewind::rewind_to_checkpoint;
-use cortex_engine::sync::sync_ledger;
+use cortex_engine::sync::{sync_ledger, sync_ledger_rebase};
 use cortex_engine::tombstone::{record_tombstone, RecordTombstoneParams};
 use cortex_mcp::McpServer;
 use cortex_storage::{CortexDb, CortexLedger, CortexRepo};
@@ -118,7 +118,11 @@ enum Commands {
     Promote,
 
     /// Sync distributed ledger with remote git repository
-    Sync { remote: Option<String> },
+    Sync {
+        remote: Option<String>,
+        #[arg(long)]
+        rebase: bool,
+    },
 
     /// Re-index distributed ledger records into local SQLite cache
     Reindex,
@@ -590,8 +594,12 @@ pub fn run() -> anyhow::Result<()> {
             let count = promote_local_records(&repo, &mut db)?;
             println!("Promoted {} record(s) to refs/cortex/ledger.", count);
         }
-        Commands::Sync { remote } => {
-            let msg = sync_ledger(&repo, &mut db, remote.as_deref())?;
+        Commands::Sync { remote, rebase } => {
+            let msg = if rebase {
+                sync_ledger_rebase(&repo, &mut db, remote.as_deref())?
+            } else {
+                sync_ledger(&repo, &mut db, remote.as_deref())?
+            };
             println!("{}", msg);
         }
         Commands::Reindex => {

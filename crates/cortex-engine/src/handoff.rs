@@ -33,10 +33,26 @@ pub fn create_handoff_envelope(
 
     let mut envelope = EpistemicHandoff::new(handoff_id, head_sha, dirty_hash, objective);
 
-    // Populate active tombstone IDs
+    // Filter out revoked records via LifecycleEvent
+    let mut revoked_ids = std::collections::HashSet::new();
+    if let Ok(events) = db.list_records_by_kind("EVENT") {
+        for evt_rec in events {
+            if let Ok(evt) =
+                serde_json::from_str::<cortex_core::schema::LifecycleEvent>(&evt_rec.json)
+            {
+                if evt.event_type == cortex_core::schema::EventType::Revoke {
+                    revoked_ids.insert(evt.target_id);
+                }
+            }
+        }
+    }
+
+    // Populate active tombstone IDs (excluding revoked tombstones)
     let tombstones = db.list_records_by_kind("TOMBSTONE")?;
     for t in &tombstones {
-        envelope.active_tombstone_ids.push(t.id.clone());
+        if !revoked_ids.contains(&t.id) {
+            envelope.active_tombstone_ids.push(t.id.clone());
+        }
     }
 
     // Populate edges & hypotheses
@@ -57,7 +73,7 @@ pub fn create_handoff_envelope(
         }
     }
 
-    // Enforce 4096-byte token budget
+    // Enforce 4096-byte token budget adaptively
     enforce_byte_budget(&mut envelope, MAX_HANDOFF_BYTES)?;
 
     Ok(envelope)
@@ -70,14 +86,36 @@ fn enforce_byte_budget(envelope: &mut EpistemicHandoff, max_bytes: usize) -> Res
         return Ok(());
     }
 
-    // Priority 1: Clear or truncate do_not_re_read_unchanged
+    // Tier 1: Clear do_not_re_read_unchanged file cache hints (safest to drop)
     envelope.do_not_re_read_unchanged.clear();
     json = serde_json::to_string(envelope).map_err(CortexError::Json)?;
     if json.len() <= max_bytes {
         return Ok(());
     }
 
-    // Priority 2: Truncate verified_call_graph (keep newest)
+    // Tier 2: Shed speculative low-confidence hypotheses (confidence < 0.5), lowest first
+    envelope.active_hypotheses.sort_by(|a, b| {
+        a.confidence
+            .partial_cmp(&b.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    while json.len() > max_bytes {
+        if let Some(pos) = envelope
+            .active_hypotheses
+            .iter()
+            .position(|h| h.confidence < 0.5)
+        {
+            envelope.active_hypotheses.remove(pos);
+            json = serde_json::to_string(envelope).map_err(CortexError::Json)?;
+        } else {
+            break;
+        }
+    }
+    if json.len() <= max_bytes {
+        return Ok(());
+    }
+
+    // Tier 3: Truncate verified call-graph edges (oldest first)
     while json.len() > max_bytes && !envelope.verified_call_graph.is_empty() {
         envelope.verified_call_graph.remove(0);
         json = serde_json::to_string(envelope).map_err(CortexError::Json)?;
@@ -86,7 +124,24 @@ fn enforce_byte_budget(envelope: &mut EpistemicHandoff, max_bytes: usize) -> Res
         return Ok(());
     }
 
-    // Priority 3: Truncate active_tombstone_ids
+    // Tier 4: Shed medium-confidence hypotheses (0.5 <= confidence < 0.8), lowest first
+    while json.len() > max_bytes {
+        if let Some(pos) = envelope
+            .active_hypotheses
+            .iter()
+            .position(|h| h.confidence < 0.8)
+        {
+            envelope.active_hypotheses.remove(pos);
+            json = serde_json::to_string(envelope).map_err(CortexError::Json)?;
+        } else {
+            break;
+        }
+    }
+    if json.len() <= max_bytes {
+        return Ok(());
+    }
+
+    // Tier 5: Truncate active tombstone IDs (oldest first, preserving recent negative knowledge)
     while json.len() > max_bytes && !envelope.active_tombstone_ids.is_empty() {
         envelope.active_tombstone_ids.remove(0);
         json = serde_json::to_string(envelope).map_err(CortexError::Json)?;
@@ -95,12 +150,7 @@ fn enforce_byte_budget(envelope: &mut EpistemicHandoff, max_bytes: usize) -> Res
         return Ok(());
     }
 
-    // Priority 4: Drop active hypotheses from lowest confidence to highest
-    envelope.active_hypotheses.sort_by(|a, b| {
-        a.confidence
-            .partial_cmp(&b.confidence)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    // Tier 6: Shed remaining high-confidence hypotheses (lowest confidence first)
     while json.len() > max_bytes && !envelope.active_hypotheses.is_empty() {
         envelope.active_hypotheses.remove(0);
         json = serde_json::to_string(envelope).map_err(CortexError::Json)?;
@@ -109,7 +159,7 @@ fn enforce_byte_budget(envelope: &mut EpistemicHandoff, max_bytes: usize) -> Res
         return Ok(());
     }
 
-    // Priority 5: Truncate objective safely at UTF-8 character boundaries
+    // Tier 7: Truncate objective safely at UTF-8 character boundaries
     while json.len() > max_bytes && envelope.objective.len() > 3 {
         let excess = json.len() - max_bytes;
         let truncate_len = envelope.objective.len().saturating_sub(excess + 3);
@@ -126,6 +176,10 @@ fn enforce_byte_budget(envelope: &mut EpistemicHandoff, max_bytes: usize) -> Res
         if envelope.objective == "..." {
             break;
         }
+    }
+
+    if json.len() > max_bytes {
+        envelope.objective.clear();
     }
 
     Ok(())
