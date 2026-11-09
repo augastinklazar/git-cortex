@@ -1,7 +1,7 @@
 use cortex_core::error::Result;
 use cortex_storage::{CortexDb, CortexLedger, CortexRepo};
 
-pub fn run_doctor(repo: &CortexRepo, db: &CortexDb) -> Result<()> {
+pub fn run_doctor(repo: &CortexRepo, db: Option<&CortexDb>) -> Result<()> {
     println!("=== git-cortex Doctor Diagnostics ===");
 
     // 1. Repo info
@@ -22,14 +22,32 @@ pub fn run_doctor(repo: &CortexRepo, db: &CortexDb) -> Result<()> {
     // 2. State DB
     let db_path = repo.state_db_path();
     if db_path.exists() {
-        let t_count = db
-            .list_records_by_kind("TOMBSTONE")
-            .map(|v| v.len())
-            .unwrap_or(0);
-        let i_count = db
-            .list_records_by_kind("INVARIANT")
-            .map(|v| v.len())
-            .unwrap_or(0);
+        let (t_count, i_count) = if let Some(database) = db {
+            let t = database
+                .list_records_by_kind("TOMBSTONE")
+                .map(|v| v.len())
+                .unwrap_or(0);
+            let i = database
+                .list_records_by_kind("INVARIANT")
+                .map(|v| v.len())
+                .unwrap_or(0);
+            (t, i)
+        } else {
+            match CortexDb::open(&db_path) {
+                Ok(database) => {
+                    let t = database
+                        .list_records_by_kind("TOMBSTONE")
+                        .map(|v| v.len())
+                        .unwrap_or(0);
+                    let i = database
+                        .list_records_by_kind("INVARIANT")
+                        .map(|v| v.len())
+                        .unwrap_or(0);
+                    (t, i)
+                }
+                Err(_) => (0, 0),
+            }
+        };
         println!(
             "✓ SQLite State DB: {} ({} Tombstones, {} Invariants)",
             db_path.display(),
@@ -162,6 +180,23 @@ mod tests {
         let cortex_repo = CortexRepo::discover(Some(temp.path())).unwrap();
         let db = CortexDb::open_in_memory().unwrap();
 
-        assert!(run_doctor(&cortex_repo, &db).is_ok());
+        assert!(run_doctor(&cortex_repo, Some(&db)).is_ok());
+    }
+
+    #[test]
+    fn test_doctor_uninitialized_repo_does_not_create_db() {
+        let temp = TempDir::new().unwrap();
+        let _git_repo = Repository::init(temp.path()).unwrap();
+
+        let cortex_repo = CortexRepo::discover(Some(temp.path())).unwrap();
+        let db_path = cortex_repo.state_db_path();
+        assert!(!db_path.exists());
+
+        // Running doctor on uninitialized repo must succeed and NOT create state.db
+        assert!(run_doctor(&cortex_repo, None).is_ok());
+        assert!(
+            !db_path.exists(),
+            "Doctor should not create SQLite DB file!"
+        );
     }
 }

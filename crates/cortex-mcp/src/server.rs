@@ -62,7 +62,10 @@ impl McpServer {
         }
     }
 
-    fn handle_request(&mut self, req: &JsonRpcRequest) -> Option<JsonRpcResponse> {
+    pub fn handle_request(&mut self, req: &JsonRpcRequest) -> Option<JsonRpcResponse> {
+        // Per JSON-RPC 2.0 (section 4.1), notifications MUST NOT produce any response
+        req.id.as_ref()?;
+
         match req.method.as_str() {
             "initialize" => {
                 if let Some(params) = &req.params {
@@ -199,15 +202,25 @@ impl McpServer {
                     None => return ToolResult::error("Missing required 'objective'".to_string()),
                 };
 
-                let edges: Vec<CallGraphEdge> = args
-                    .get("verified_edges")
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .unwrap_or_default();
+                let edges: Vec<CallGraphEdge> = match args.get("verified_edges") {
+                    Some(val) if !val.is_null() => match serde_json::from_value(val.clone()) {
+                        Ok(edges) => edges,
+                        Err(e) => {
+                            return ToolResult::error(format!("Invalid 'verified_edges': {}", e))
+                        }
+                    },
+                    _ => Vec::new(),
+                };
 
-                let hyps: Vec<ActiveHypothesis> = args
-                    .get("active_hypotheses")
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .unwrap_or_default();
+                let hyps: Vec<ActiveHypothesis> = match args.get("active_hypotheses") {
+                    Some(val) if !val.is_null() => match serde_json::from_value(val.clone()) {
+                        Ok(hyps) => hyps,
+                        Err(e) => {
+                            return ToolResult::error(format!("Invalid 'active_hypotheses': {}", e))
+                        }
+                    },
+                    _ => Vec::new(),
+                };
 
                 match checkpoint_state(&self.repo, &mut self.db, objective, &edges, &hyps) {
                     Ok(res) => ToolResult::ok(format!(

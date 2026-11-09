@@ -28,42 +28,34 @@ pub fn reconcile_candidates(
             continue;
         }
 
-        let mut all_reverted = true;
+        let mut reverted_symbols = Vec::new();
+        let mut unreverted_symbols = Vec::new();
 
-        for ts in &symbols {
+        for ts in symbols {
+            let mut is_reverted = false;
             if let Some((rel_path, scope)) = parse_symbol_uri(&ts.symbol_uri) {
                 let full = repo.workdir.join(&rel_path);
                 if full.exists() {
                     if let Ok(src) = std::fs::read(&full) {
                         if let Ok(syms) = extract_symbols(Path::new(&rel_path), &src) {
                             if let Some(s) = syms.iter().find(|s| s.scope_chain == scope) {
-                                if s.ast_hash != ts.base_ast_hash {
-                                    all_reverted = false;
-                                    break;
+                                if s.ast_hash == ts.base_ast_hash {
+                                    is_reverted = true;
                                 }
-                            } else {
-                                all_reverted = false;
-                                break;
                             }
-                        } else {
-                            all_reverted = false;
-                            break;
                         }
-                    } else {
-                        all_reverted = false;
-                        break;
                     }
-                } else {
-                    all_reverted = false;
-                    break;
                 }
+            }
+
+            if is_reverted {
+                reverted_symbols.push(ts);
             } else {
-                all_reverted = false;
-                break;
+                unreverted_symbols.push(ts);
             }
         }
 
-        if all_reverted {
+        if !reverted_symbols.is_empty() {
             let latest_exec_id = cand.exec_ids.split(',').next_back().unwrap_or("").trim();
 
             let (cmd, sig) = if let Ok(Some(exec)) = db.get_exec(latest_exec_id) {
@@ -75,7 +67,10 @@ pub fn reconcile_candidates(
                 )
             };
 
-            let sym_uris: Vec<String> = symbols.iter().map(|s| s.symbol_uri.clone()).collect();
+            let sym_uris: Vec<String> = reverted_symbols
+                .iter()
+                .map(|s| s.symbol_uri.clone())
+                .collect();
             let approach = format!("Modified {} ({})", sym_uris.join(", "), cand.diff);
             let reason = format!("Failed verification with signature: {}", sig);
 
@@ -94,7 +89,13 @@ pub fn reconcile_candidates(
             )?;
 
             let mut updated = cand;
-            updated.state = "PROMOTED".to_string();
+            if unreverted_symbols.is_empty() {
+                updated.state = "PROMOTED".to_string();
+            } else {
+                updated.symbols_json =
+                    serde_json::to_string(&unreverted_symbols).unwrap_or_default();
+                updated.state = "FAILED".to_string();
+            }
             db.save_candidate(&updated)?;
 
             promoted_records.push(record);

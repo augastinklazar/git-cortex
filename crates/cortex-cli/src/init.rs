@@ -120,28 +120,69 @@ pub fn run_init(repo: &CortexRepo, opts: &InitOptions) -> Result<Vec<String>> {
     // 5. Configure MCP server in .mcp.json
     if opts.setup_mcp_config {
         let mcp_json_path = repo.workdir.join(".mcp.json");
-        let mcp_config = serde_json::json!({
-            "mcpServers": {
-                "git-cortex": {
-                    "command": "git",
-                    "args": ["cortex", "mcp-serve"]
-                }
-            }
-        });
-
-        if !mcp_json_path.exists() {
-            fs::write(
-                &mcp_json_path,
-                serde_json::to_string_pretty(&mcp_config).unwrap(),
-            )
-            .map_err(CortexError::Io)?;
-            actions.push("Generated .mcp.json configuration for MCP harnesses".to_string());
-        } else {
-            actions.push(".mcp.json already exists; leaving unchanged".to_string());
-        }
+        let msg = setup_or_merge_mcp_config(&mcp_json_path)?;
+        actions.push(msg);
     }
 
     Ok(actions)
+}
+
+fn setup_or_merge_mcp_config(mcp_json_path: &Path) -> Result<String> {
+    let git_cortex_entry = serde_json::json!({
+        "command": "git",
+        "args": ["cortex", "mcp-serve"]
+    });
+
+    if mcp_json_path.exists() {
+        let content = fs::read_to_string(mcp_json_path).map_err(CortexError::Io)?;
+        let mut root: serde_json::Value =
+            serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}));
+        if !root.is_object() {
+            root = serde_json::json!({});
+        }
+
+        let mcp_servers = root
+            .as_object_mut()
+            .unwrap()
+            .entry("mcpServers")
+            .or_insert_with(|| serde_json::json!({}));
+
+        if !mcp_servers.is_object() {
+            *mcp_servers = serde_json::json!({});
+        }
+
+        mcp_servers
+            .as_object_mut()
+            .unwrap()
+            .insert("git-cortex".to_string(), git_cortex_entry);
+
+        fs::write(
+            mcp_json_path,
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&root).unwrap_or_default()
+            ),
+        )
+        .map_err(CortexError::Io)?;
+
+        Ok("Merged git-cortex into existing .mcp.json".to_string())
+    } else {
+        let root = serde_json::json!({
+            "mcpServers": {
+                "git-cortex": git_cortex_entry
+            }
+        });
+        fs::write(
+            mcp_json_path,
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&root).unwrap_or_default()
+            ),
+        )
+        .map_err(CortexError::Io)?;
+
+        Ok("Generated .mcp.json configuration for MCP harnesses".to_string())
+    }
 }
 
 fn install_chained_hook(hooks_dir: &Path, hook_name: &str, cortex_cmd: &str) -> Result<()> {
@@ -315,6 +356,51 @@ mod tests {
                 .iter()
                 .any(|r| r == "+refs/heads/*:refs/remotes/origin/*"),
             "Missing default heads refspec was not restored!"
+        );
+    }
+
+    #[test]
+    fn test_init_merges_mcp_json_preserving_existing_servers() {
+        let temp = TempDir::new().unwrap();
+        let _git_repo = Repository::init(temp.path()).unwrap();
+        let cortex_repo = CortexRepo::discover(Some(temp.path())).unwrap();
+
+        let mcp_path = temp.path().join(".mcp.json");
+        let initial_config = serde_json::json!({
+            "mcpServers": {
+                "other-tool": {
+                    "command": "node",
+                    "args": ["server.js"]
+                }
+            }
+        });
+        fs::write(
+            &mcp_path,
+            serde_json::to_string_pretty(&initial_config).unwrap(),
+        )
+        .unwrap();
+
+        let opts = InitOptions {
+            install_hooks: false,
+            setup_agents_md: false,
+            setup_mcp_config: true,
+        };
+
+        let actions = run_init(&cortex_repo, &opts).unwrap();
+        assert!(actions
+            .iter()
+            .any(|a| a.contains("Merged git-cortex into existing .mcp.json")));
+
+        let content = fs::read_to_string(&mcp_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let servers = parsed.get("mcpServers").unwrap();
+
+        // Both 'other-tool' and 'git-cortex' must be present!
+        assert!(servers.get("other-tool").is_some());
+        assert!(servers.get("git-cortex").is_some());
+        assert_eq!(
+            servers["git-cortex"]["args"],
+            serde_json::json!(["cortex", "mcp-serve"])
         );
     }
 }

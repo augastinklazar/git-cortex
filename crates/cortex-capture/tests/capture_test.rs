@@ -128,3 +128,84 @@ fn test_pipe_drain_large_output_no_deadlock() {
     let exit_code = execute_command(&cortex_repo, &mut db, &cmd, Some(5)).unwrap();
     assert_eq!(exit_code, 0);
 }
+
+#[test]
+fn test_partial_candidate_reconcile() {
+    let temp = TempDir::new().unwrap();
+    let repo = Repository::init(temp.path()).unwrap();
+    let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+
+    let src_dir = temp.path().join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    let file = src_dir.join("worker.rs");
+    let original_code = "pub fn foo() -> bool {\n  true\n}\npub fn bar() -> i32 {\n  42\n}\n";
+    fs::write(&file, original_code).unwrap();
+
+    let mut index = repo.index().unwrap();
+    index
+        .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+        .unwrap();
+    index.write().unwrap();
+    let tree_id = index.write_tree().unwrap();
+    let tree = repo.find_tree(tree_id).unwrap();
+    repo.commit(Some("HEAD"), &sig, &sig, "Initial", &tree, &[])
+        .unwrap();
+
+    let cortex_repo = CortexRepo::discover(Some(temp.path())).unwrap();
+    let mut db = CortexDb::open_in_memory().unwrap();
+
+    // 1. Mutate both foo and bar
+    fs::write(
+        &file,
+        "pub fn foo() -> bool {\n  false\n}\npub fn bar() -> i32 {\n  0\n}\n",
+    )
+    .unwrap();
+
+    // 2. Fail test
+    let cmd = vec![
+        "python".to_string(),
+        "-c".to_string(),
+        "import sys; print('AssertionError: test failure'); sys.exit(1)".to_string(),
+    ];
+    let exit_code = execute_command(&cortex_repo, &mut db, &cmd, None).unwrap();
+    assert_eq!(exit_code, 1);
+
+    let candidates = db.get_candidates_by_state("FAILED").unwrap();
+    assert_eq!(candidates.len(), 1);
+
+    // 3. Revert only foo, leave bar mutated
+    fs::write(
+        &file,
+        "pub fn foo() -> bool {\n  true\n}\npub fn bar() -> i32 {\n  0\n}\n",
+    )
+    .unwrap();
+
+    // 4. Reconcile: partial revert synthesizes tombstone for foo, keeps bar in FAILED
+    let promoted = reconcile_candidates(&cortex_repo, &mut db).unwrap();
+    assert_eq!(promoted.len(), 1);
+    assert!(promoted[0]
+        .target_symbols
+        .iter()
+        .any(|s| s.symbol_uri.contains("foo")));
+    assert!(!promoted[0]
+        .target_symbols
+        .iter()
+        .any(|s| s.symbol_uri.contains("bar")));
+
+    let failed_after = db.get_candidates_by_state("FAILED").unwrap();
+    assert_eq!(failed_after.len(), 1);
+    assert!(!failed_after[0].symbols_json.contains("foo"));
+    assert!(failed_after[0].symbols_json.contains("bar"));
+
+    // 5. Revert bar too
+    fs::write(&file, original_code).unwrap();
+    let promoted_bar = reconcile_candidates(&cortex_repo, &mut db).unwrap();
+    assert_eq!(promoted_bar.len(), 1);
+    assert!(promoted_bar[0]
+        .target_symbols
+        .iter()
+        .any(|s| s.symbol_uri.contains("bar")));
+
+    let remaining = db.get_candidates_by_state("FAILED").unwrap();
+    assert!(remaining.is_empty());
+}

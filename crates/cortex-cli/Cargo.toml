@@ -10,6 +10,10 @@ description = "Command-line interface and git subcommand for git-cortex"
 name = "git-cortex"
 path = "src/main.rs"
 
+[[bin]]
+name = "cortex"
+path = "src/bin/cortex.rs"
+
 [dependencies]
 cortex-core.workspace = true
 cortex-ast.workspace = true
