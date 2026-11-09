@@ -49,6 +49,10 @@ pub fn rewind_to_checkpoint(
         )
     };
 
+    // Step 2: Restore working tree and index cleanly to checkpoint
+    CortexSnapshot::restore_snapshot(&repo.repo, &checkpoint_ref)?;
+
+    // Step 3: Record immunity tombstone on restored target symbols
     let tombstone = record_tombstone(
         repo,
         db,
@@ -62,9 +66,6 @@ pub fn rewind_to_checkpoint(
             capture_mode: CaptureMode::RewindSynthesized,
         },
     )?;
-
-    // Step 2 & 3: Restore working tree and index cleanly to checkpoint
-    CortexSnapshot::restore_snapshot(&repo.repo, &checkpoint_ref)?;
 
     Ok(RewindResult {
         target_checkpoint_id: checkpoint_id.to_string(),
