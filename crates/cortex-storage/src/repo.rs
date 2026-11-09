@@ -1,12 +1,16 @@
+use crate::cache::SymbolCache;
+use cortex_ast::Symbol;
 use cortex_core::error::{CortexError, Result};
 use git2::Repository;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub struct CortexRepo {
     pub repo: Repository,
     pub workdir: PathBuf,
     pub git_dir: PathBuf,
     pub cortex_dir: PathBuf,
+    pub symbol_cache: Arc<SymbolCache>,
 }
 
 impl CortexRepo {
@@ -36,7 +40,13 @@ impl CortexRepo {
             workdir,
             git_dir,
             cortex_dir,
+            symbol_cache: Arc::new(SymbolCache::new()),
         })
+    }
+
+    /// Extract symbols using the in-memory cache keyed by (path, content_hash)
+    pub fn extract_symbols_cached(&self, path: &Path, content: &[u8]) -> Result<Vec<Symbol>> {
+        self.symbol_cache.get_or_extract(path, content)
     }
 
     /// Resolve primary .git common directory, supporting linked Git worktrees

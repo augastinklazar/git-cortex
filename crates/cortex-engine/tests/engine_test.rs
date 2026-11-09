@@ -308,3 +308,37 @@ fn test_checkpoint_persists_to_sqlite() {
     assert_eq!(chk.objective, "checkpoint test objective");
     assert_eq!(chk.snapshot_ref, res.snapshot_ref);
 }
+
+#[test]
+fn test_symbol_cache_memoization_across_inspections() {
+    let (_temp, repo, mut db) = setup_repo();
+
+    let _contract = record_invariant(
+        &repo,
+        &mut db,
+        "src/calc.rs#Calc::add",
+        "Add invariant",
+        &[],
+        "cargo test",
+        InvariantSeverity::Blocking,
+    )
+    .unwrap();
+
+    // record_invariant already populates cache for src/calc.rs
+    assert_eq!(repo.symbol_cache.len(), 1);
+
+    // First inspection reuses cached symbols without growing cache
+    let res1 = inspect_symbol(&repo, &db, "src/calc.rs", Some("Calc::add")).unwrap();
+    assert_eq!(res1.active_invariants.len(), 1);
+    assert_eq!(repo.symbol_cache.len(), 1);
+
+    // Second inspection reuses cached symbols
+    let res2 = inspect_symbol(&repo, &db, "src/calc.rs", Some("Calc::add")).unwrap();
+    assert_eq!(res2.active_invariants.len(), 1);
+    assert_eq!(repo.symbol_cache.len(), 1);
+
+    // Invariant verification also hits cached symbols
+    let verify_rep = verify_invariants(&repo, &db, DiffScope::WorkingTree).unwrap();
+    assert!(verify_rep.passed);
+    assert_eq!(repo.symbol_cache.len(), 1);
+}

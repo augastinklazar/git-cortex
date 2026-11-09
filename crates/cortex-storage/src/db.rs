@@ -54,6 +54,19 @@ pub struct StoredExec {
     pub duration_ms: i64,
 }
 
+#[derive(Debug, Clone)]
+pub struct BatchRecordItem {
+    pub id: String,
+    pub kind: String,
+    pub json: String,
+    pub origin: String,
+    pub promoted: bool,
+    pub branch: String,
+    pub created_at: String,
+    pub content_hash: String,
+    pub symbol_refs: Vec<(String, String, String, String)>,
+}
+
 impl CortexDb {
     pub fn open(db_path: &Path) -> Result<Self> {
         let mut conn = Connection::open(db_path)
@@ -134,6 +147,80 @@ impl CortexDb {
                 ],
             )
             .map_err(|e| CortexError::Database(format!("Failed to insert record: {}", e)))?;
+
+        Ok(())
+    }
+
+    pub fn save_records_batch(&mut self, items: &[BatchRecordItem]) -> Result<()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+
+        let tx = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| CortexError::Database(e.to_string()))?;
+
+        {
+            let mut rec_stmt = tx
+                .prepare_cached(
+                    r#"
+                    INSERT INTO records (id, kind, json, origin, promoted, branch, created_at, content_hash)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                    ON CONFLICT(id) DO UPDATE SET
+                        json = excluded.json,
+                        origin = excluded.origin,
+                        promoted = excluded.promoted,
+                        branch = excluded.branch,
+                        created_at = excluded.created_at,
+                        content_hash = excluded.content_hash
+                    "#,
+                )
+                .map_err(|e| CortexError::Database(e.to_string()))?;
+
+            let mut sym_stmt = tx
+                .prepare_cached(
+                    r#"
+                    INSERT OR IGNORE INTO record_symbols (record_id, symbol_uri, path, ast_hash, role)
+                    VALUES (?1, ?2, ?3, ?4, ?5)
+                    "#,
+                )
+                .map_err(|e| CortexError::Database(e.to_string()))?;
+
+            for item in items {
+                rec_stmt
+                    .execute(params![
+                        item.id,
+                        item.kind,
+                        item.json,
+                        item.origin,
+                        if item.promoted { 1 } else { 0 },
+                        item.branch,
+                        item.created_at,
+                        item.content_hash
+                    ])
+                    .map_err(|e| {
+                        CortexError::Database(format!(
+                            "Failed to insert batch record {}: {}",
+                            item.id, e
+                        ))
+                    })?;
+
+                for (uri, path, hash, role) in &item.symbol_refs {
+                    sym_stmt
+                        .execute(params![item.id, uri, path, hash, role])
+                        .map_err(|e| {
+                            CortexError::Database(format!(
+                                "Failed to insert batch symbol ref: {}",
+                                e
+                            ))
+                        })?;
+                }
+            }
+        }
+
+        tx.commit()
+            .map_err(|e| CortexError::Database(e.to_string()))?;
 
         Ok(())
     }
