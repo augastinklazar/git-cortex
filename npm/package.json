@@ -7,7 +7,7 @@
     "cortex": "bin/git-cortex.js"
   },
   "scripts": {
-    "test": "node bin/git-cortex.js --version"
+    "test": "node test/checksum_test.js"
   },
   "repository": {
     "type": "git",

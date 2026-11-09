@@ -40,7 +40,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -93,7 +93,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -104,9 +104,15 @@ jobs:
         run: |
           find artifacts -type f -exec mv {} . \;
 
+      - name: Generate SHA256SUMS.txt manifest
+        run: |
+          sha256sum git-cortex-*.tar.gz git-cortex-*.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             git-cortex-*
+            SHA256SUMS.txt
           generate_release_notes: true
