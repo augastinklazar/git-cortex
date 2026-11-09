@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "git-cortex": {
+      "command": "git",
+      "args": [
+        "cortex",
+        "mcp-serve"
+      ]
+    }
+  }
+}

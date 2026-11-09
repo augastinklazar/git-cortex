@@ -61,10 +61,10 @@ pub fn run_init(repo: &CortexRepo, opts: &InitOptions) -> Result<Vec<String>> {
         let hooks_dir = repo.git_dir.join("hooks");
         fs::create_dir_all(&hooks_dir).map_err(CortexError::Io)?;
 
-        install_chained_hook(&hooks_dir, "pre-commit", "git cortex hook pre-commit")?;
-        install_chained_hook(&hooks_dir, "post-commit", "git cortex hook post-commit")?;
-        install_chained_hook(&hooks_dir, "post-checkout", "git cortex hook post-checkout")?;
-        install_chained_hook(&hooks_dir, "post-merge", "git cortex hook post-merge")?;
+        install_chained_hook(&hooks_dir, "pre-commit", "pre-commit")?;
+        install_chained_hook(&hooks_dir, "post-commit", "post-commit")?;
+        install_chained_hook(&hooks_dir, "post-checkout", "post-checkout")?;
+        install_chained_hook(&hooks_dir, "post-merge", "post-merge")?;
         actions.push(
             "Installed native git hooks (pre-commit, post-commit, post-checkout, post-merge)"
                 .to_string(),
@@ -125,7 +125,10 @@ fn install_chained_hook(hooks_dir: &Path, hook_name: &str, cortex_cmd: &str) -> 
         return Ok(());
     }
 
-    let hook_snippet = format!("\n{}\n{}\n{}\n", marker_begin, cortex_cmd, marker_end);
+    let hook_snippet = format!(
+        "\n{}\nif command -v git-cortex >/dev/null 2>&1; then\n    git-cortex hook {}\nelif command -v cortex >/dev/null 2>&1; then\n    cortex hook {}\nfi\n{}\n",
+        marker_begin, cortex_cmd, cortex_cmd, marker_end
+    );
 
     existing.push_str(&hook_snippet);
     fs::write(&hook_path, existing).map_err(CortexError::Io)?;
