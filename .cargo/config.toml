@@ -1,6 +1,0 @@
-[build]
-target-dir = "C:/Users/augas/AppData/Local/cargo-target/git-cortex"
-
-[env]
-CC_x86_64_pc_windows_gnullvm = { value = "scripts/cortex-clang.cmd", relative = true }
-CC = { value = "scripts/cortex-clang.cmd", relative = true }

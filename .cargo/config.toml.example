@@ -1,0 +1,10 @@
+# Example local Cargo configuration for git-cortex development
+# Copy this file to `.cargo/config.toml` to customize your local build environment.
+
+# [build]
+# Redirect target directory outside sync drives (e.g. Google Drive, OneDrive)
+# target-dir = "C:/Users/<username>/AppData/Local/cargo-target/git-cortex"
+
+# [env]
+# Platform-specific compiler overrides if using LLVM-MinGW toolchains:
+# CC_x86_64_pc_windows_gnullvm = { value = "scripts/cortex-clang.cmd", relative = true }

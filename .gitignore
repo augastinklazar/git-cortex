@@ -9,6 +9,9 @@ target/
 *.db-wal
 *.db-shm
 
+# Local cargo config
+.cargo/config.toml
+
 # IDE & OS
 .vscode/
 .idea/
