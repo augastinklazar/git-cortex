@@ -86,35 +86,38 @@
 ```
 
 ### 2.1 Tier 1: SQLite WAL State Database
-- Located at `.git/cortex/state.db` (or `<commondir>/cortex/state.db` when operating inside a linked git worktree).
-- Configured with `PRAGMA journal_mode = WAL;`, `PRAGMA synchronous = NORMAL;`, and `PRAGMA busy_timeout = 5000;`.
+- Located at `.git/cortex/state.db` (or `<commondir>/cortex/state.db` when operating inside a linked git worktree via `resolve_commondir`).
+- Configured with `PRAGMA journal_mode = WAL;`, `PRAGMA synchronous = NORMAL;`, `PRAGMA foreign_keys = ON;`, and `PRAGMA busy_timeout = 5000;`.
+- Migrations are version-gated via `PRAGMA user_version = 1` inside `BEGIN IMMEDIATE` transaction boundaries to protect against race conditions under concurrent worker processes.
 - Tables:
-  - `records`: Local cache of tombstones, handoffs, and invariants.
-  - `executions`: Command execution outputs, exit codes, and durations.
-  - `candidates`: Pre-commit modifications tracking dirty working tree hashes.
+  - `records`: Local cache of tombstones, handoffs, invariants, and events.
+  - `checkpoints`: Saved working tree checkpoints with snapshot refs and graph counts.
+  - `executions`: Command execution outputs, exit codes, signatures, and durations.
+  - `candidates`: Pre-commit modifications tracking dirty working tree hashes and touched symbols.
   - `file_reads`: Session read-tracking for context assembly.
   - `call_graph_edges`: Inferred caller/callee relations across symbols.
-  - `hypotheses`: Active failure hypotheses under investigation.
+  - `hypotheses`: Active failure hypotheses under investigation with validated confidence [0.0..1.0].
 
 ### 2.2 Tier 2: `refs/cortex/ledger`
 - Stored as an independent, orphan commit graph under the dedicated git reference `refs/cortex/ledger`.
-- Sharded path layout:
+- Tracked safely via the remote-tracking refspec `+refs/cortex/ledger:refs/remotes/origin/cortex/ledger`.
+- Sharded path layout using trailing 2 characters of the monotonic ULID:
   ```
   v1/
     tombstones/
-      a1/
+      2r/
         tmb_01JBYN8W8X26Z6C8A79P0K4Z2R.json
     handoffs/
-      3c/
+      b8/
         hnd_01JBYN99F4478K1P096RTVXMB8.json
     invariants/
-      9e/
+      zc/
         inv_01JBYN9QWW847KP3308RT65NZC.json
     events/
-      52/
+      tv/
         evt_01JBYNA97T5632N7B60Q123RTV.json
   ```
-- **Merge Strategy**: Conflict-free Set-Union. Because every record filename is uniquely keyed by a monotonic ULID and immutable, remote merges never produce file-content conflicts. A three-way tree merge simply takes the union of all JSON blobs.
+- **Merge Strategy**: Conflict-free Set-Union with CAS retry backoff. Because every record filename is uniquely keyed by a monotonic ULID and immutable, remote merges never produce file-content conflicts. A three-way tree merge simply takes the union of all JSON blobs. Invariant reaffirmations log append-only `LifecycleEvent` records (`evt_...`) to preserve the immutability of historical ledger commits.
 
 ---
 

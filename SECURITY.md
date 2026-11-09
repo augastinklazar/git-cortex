@@ -60,24 +60,29 @@ Before any tombstone or invariant text is presented to an LLM context:
 To prevent sensitive API keys, tokens, and database passwords from being persisted in the SQLite database or committed to `refs/cortex/ledger`, `git-cortex` runs all stdout/stderr captures and error signatures through `cortex_core::redact::scrub`.
 
 ### Pattern Detection
-The automated scrubber detects and masks:
+The automated scrubber uses precompiled regular expressions (`LazyLock`) with zero runtime recompilation overhead:
 - Anthropic API keys (`sk-ant-api03-...`)
-- OpenAI API keys (`sk-...`)
+- OpenAI API keys (`sk-proj-...`, `sk-...`)
 - GitHub Personal Access Tokens (`ghp_...`, `github_pat_...`)
-- AWS Access Keys (`AKIA...`)
+- AWS Access Keys (`AKIA...`, `ASIA...`)
 - Generic Bearer tokens and JSON Web Tokens (`eyJ...`)
 - High-entropy private keys (`-----BEGIN PRIVATE KEY-----`)
-- Password patterns in connection URIs (`postgres://user:pass@host`)
+- Password patterns in connection URIs across standard database and broker protocols (`postgres://`, `mysql://`, `redis://`, `mongodb://`, `amqp://`)
 
-Matched strings are replaced with `[REDACTED_SECRET]` prior to database insertion.
+### False-Positive Protection
+To avoid corrupting valid code symbols and camelCase identifiers (such as `skinnyModel` or `skeletonConfig`), the scrubber applies word-boundary and casing heuristics (`looks_like_camel_identifier`) before masking substrings matching generic key prefixes.
+
+Matched strings are safely replaced with `[REDACTED_SECRET]` prior to database insertion or ledger generation.
 
 ---
 
 ## 5. Ledger Integrity & Ref Namespace Isolation
 
 - **Isolated Refspace**: All persistent epistemic records are committed to `refs/cortex/ledger`, outside developer branch heads (`refs/heads/*`) and tags (`refs/tags/*`).
-- **Immutable Sharded Paths**: Records are stored under monotonic ULID paths (`v1/<kind>/<shard>/<ulid>.json`). Overwriting existing records is disallowed.
+- **Safe Remote-Tracking Refspec**: `git cortex init` installs a safe remote-tracking fetch refspec (`+refs/cortex/ledger:refs/remotes/origin/cortex/ledger`), avoiding dangerous local ref clobbering.
+- **Immutable Sharded Paths**: Records are stored under monotonic ULID paths (`v1/<kind>/<shard>/<ulid>.json`) sharded by their trailing 2 characters to ensure uniform directory distribution and scale beyond 100,000 records. Overwriting existing records is disallowed.
 - **Deterministic Canon**: Canonical JSON serialization (RFC 8785) is enforced to ensure byte-exact SHA hashing across different machine architectures and runtimes.
+- **Worktree Isolation & Commondir Sharing**: Linked git worktrees safely discover and share the primary repository's state database via `commondir` pointer resolution, preventing split-brain states across multiple worktrees.
 
 ---
 

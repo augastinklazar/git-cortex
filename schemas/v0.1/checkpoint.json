@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://git-cortex.dev/schemas/v0.1/checkpoint.json",
+  "title": "CheckpointRecord",
+  "description": "Schema for working tree checkpoints capturing active epistemic state, snapshots, and verified sub-agent hypotheses.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "checkpoint_id",
+    "branch",
+    "snapshot_ref",
+    "objective",
+    "state",
+    "created_at"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "checkpoint_id": { "type": "string", "pattern": "^chk_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "branch": { "type": "string" },
+    "snapshot_ref": { "type": "string", "pattern": "^refs/cortex/snapshots/checkpoints/[0-9a-f]{40}$" },
+    "objective": { "type": "string" },
+    "state": {
+      "type": "object",
+      "required": ["edge_count", "hypothesis_count"],
+      "properties": {
+        "edge_count": { "type": "integer", "minimum": 0 },
+        "hypothesis_count": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": true
+}

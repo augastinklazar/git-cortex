@@ -34,22 +34,49 @@ Autonomous coding agents routinely fail during complex tasks due to three missin
 ### Installation
 
 ```bash
+# Via Cargo (installs both 'git-cortex' and 'cortex' binaries)
 cargo install --path crates/cortex-cli
-# or via npx
+
+# Or via Homebrew
+brew tap augastinklazar/tap
+brew install git-cortex
+
+# Or run instantly via npx
 npx git-cortex init
 ```
+
+Both `git cortex <cmd>` (as a native Git subcommand) and `cortex <cmd>` (standalone binary) are supported interchangeably.
 
 ### Initialize in a Repository
 
 ```bash
 git cortex init
+# or: cortex init
 ```
 
 This sets up:
-- `.git/cortex/` local state cache
+- `.git/cortex/` local SQLite state cache
 - Chained Git hooks (`pre-commit`, `post-commit`, `post-checkout`, `post-merge`)
 - Normative instructions in `AGENTS.md` and `CLAUDE.md`
-- Harness MCP server configuration (`.mcp.json`)
+- Harness MCP server configuration merged into `.mcp.json`
+
+### CLI Commands Reference
+
+| Command | Description |
+|---|---|
+| `git cortex init` | Initialize local SQLite DB, git hooks, `AGENTS.md`, and `.mcp.json` |
+| `git cortex status` | Show current branch, dirty hash, and epistemic count overview |
+| `git cortex inspect <file>` | Inspect a file or symbol for active tombstones and invariant locks |
+| `git cortex tombstone` | List, show, or add negative-knowledge tombstones |
+| `git cortex invariant` | List, check, or record causal invariant contracts |
+| `git cortex checkpoint` | Save working tree snapshot and active hypotheses |
+| `git cortex rewind <id>` | Safely revert to checkpoint and synthesize failure tombstones |
+| `git cortex handoff` | Export/import ≤4 KB sub-agent handoff envelopes |
+| `git cortex verify-invariants` | Verify invariants against staged, working tree, or branch diffs |
+| `git cortex promote` | Promote local records to the distributed `refs/cortex/ledger` |
+| `git cortex sync` | Push and fetch distributed ledger records with origin remote |
+| `git cortex doctor` | Run configuration and git environment diagnostics |
+| `git cortex mcp-serve` | Run stdio Model Context Protocol (MCP) server for agent harnesses |
 
 ## 5. Specification
 
