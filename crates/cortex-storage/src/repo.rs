@@ -28,8 +28,7 @@ impl CortexRepo {
         let cortex_dir = git_dir.join("cortex");
 
         if !cortex_dir.exists() {
-            std::fs::create_dir_all(&cortex_dir)
-                .map_err(|e| CortexError::Io(e))?;
+            std::fs::create_dir_all(&cortex_dir).map_err(CortexError::Io)?;
         }
 
         Ok(Self {

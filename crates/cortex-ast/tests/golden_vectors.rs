@@ -84,7 +84,8 @@ impl ConnectionPool {
     let src_crlf_and_spaced = b"\r\n\r\npub struct ConnectionPool {\r\n    size: usize,\r\n}\r\n\r\nimpl ConnectionPool {\r\n    // Check available connections\r\n    pub fn acquire(&self) -> bool {\r\n        \r\n        self.size > 0\r\n    }\r\n}\r\n";
 
     let symbols1 = extract_symbols(Path::new("src/pool/connection.rs"), src_clean).unwrap();
-    let symbols2 = extract_symbols(Path::new("src/pool/connection.rs"), src_crlf_and_spaced).unwrap();
+    let symbols2 =
+        extract_symbols(Path::new("src/pool/connection.rs"), src_crlf_and_spaced).unwrap();
 
     let method1 = symbols1
         .iter()
@@ -95,7 +96,10 @@ impl ConnectionPool {
         .find(|s| s.scope_chain == "ConnectionPool::acquire")
         .expect("Should find ConnectionPool::acquire in crlf version");
 
-    assert_eq!(method1.uri, "src/pool/connection.rs#ConnectionPool::acquire");
+    assert_eq!(
+        method1.uri,
+        "src/pool/connection.rs#ConnectionPool::acquire"
+    );
     assert_eq!(method1.ast_hash, method2.ast_hash);
 }
 
@@ -119,8 +123,14 @@ class Worker:
     let symbols1 = extract_symbols(Path::new("app/worker.py"), py1).unwrap();
     let symbols2 = extract_symbols(Path::new("app/worker.py"), py2).unwrap();
 
-    let method1 = symbols1.iter().find(|s| s.scope_chain == "Worker.process").unwrap();
-    let method2 = symbols2.iter().find(|s| s.scope_chain == "Worker.process").unwrap();
+    let method1 = symbols1
+        .iter()
+        .find(|s| s.scope_chain == "Worker.process")
+        .unwrap();
+    let method2 = symbols2
+        .iter()
+        .find(|s| s.scope_chain == "Worker.process")
+        .unwrap();
 
     assert_eq!(method1.ast_hash, method2.ast_hash);
 }
@@ -141,7 +151,10 @@ func (w *Worker) Dispatch(job string) error {
 "#;
 
     let symbols = extract_symbols(Path::new("pkg/queue/worker.go"), go_src).unwrap();
-    let dispatch = symbols.iter().find(|s| s.scope_chain == "Worker.Dispatch").unwrap();
+    let dispatch = symbols
+        .iter()
+        .find(|s| s.scope_chain == "Worker.Dispatch")
+        .unwrap();
 
     assert_eq!(dispatch.uri, "pkg/queue/worker.go#Worker.Dispatch");
     assert_eq!(dispatch.kind, SymbolKind::Method);

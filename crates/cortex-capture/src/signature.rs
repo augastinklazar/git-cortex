@@ -1,12 +1,9 @@
 use regex::Regex;
 use std::sync::LazyLock;
 
-static HEX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"0x[0-9a-fA-F]+").unwrap()
-});
-static TIME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\d{1,2}:\d{2}(:\d{2})?").unwrap()
-});
+static HEX_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"0x[0-9a-fA-F]+").unwrap());
+static TIME_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\d{1,2}:\d{2}(:\d{2})?").unwrap());
 
 /// Extract and normalize a short, deterministic error signature line from terminal output
 pub fn extract_error_signature(output: &str) -> String {

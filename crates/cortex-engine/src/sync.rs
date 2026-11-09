@@ -2,11 +2,7 @@ use cortex_core::error::Result;
 use cortex_storage::{CortexDb, CortexLedger, CortexRepo, LEDGER_REF};
 use std::process::Command;
 
-pub fn sync_ledger(
-    repo: &CortexRepo,
-    db: &mut CortexDb,
-    remote: Option<&str>,
-) -> Result<String> {
+pub fn sync_ledger(repo: &CortexRepo, db: &mut CortexDb, remote: Option<&str>) -> Result<String> {
     let remote_name = remote.unwrap_or("origin");
 
     // 1. Fetch remote ledger ref using git CLI
@@ -44,7 +40,10 @@ pub fn sync_ledger(
             if out.status.success() {
                 format!("Pushed {} to {}", LEDGER_REF, remote_name)
             } else {
-                format!("Push failed or up to date: {}", String::from_utf8_lossy(&out.stderr).trim())
+                format!(
+                    "Push failed or up to date: {}",
+                    String::from_utf8_lossy(&out.stderr).trim()
+                )
             }
         }
         Err(e) => format!("Could not run git push: {}", e),

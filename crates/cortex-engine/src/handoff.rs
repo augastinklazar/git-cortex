@@ -27,7 +27,9 @@ pub fn create_handoff_envelope(
     let handoff_id = PrefixedId::new(IdPrefix::Handoff).to_string();
     let head_sha = repo.head_commit_sha()?;
     let dirty_hash = repo.working_tree_dirty_hash()?;
-    let objective = objective_override.unwrap_or("Active development task").to_string();
+    let objective = objective_override
+        .unwrap_or("Active development task")
+        .to_string();
 
     let mut envelope = EpistemicHandoff::new(handoff_id, head_sha, dirty_hash, objective);
 

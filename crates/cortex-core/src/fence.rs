@@ -68,14 +68,10 @@ impl Provenance {
 
 /// Formatter that fences a TombstoneRecord into safe markdown for LLM ingestion
 pub fn fence_tombstone(record: &TombstoneRecord, provenance: Provenance) -> String {
-    let clean_approach = truncate_with_ellipsis(
-        &sanitize_text(&record.attempted_approach),
-        MAX_APPROACH_LEN,
-    );
-    let clean_reason = truncate_with_ellipsis(
-        &sanitize_text(&record.failure_reason),
-        MAX_REASON_LEN,
-    );
+    let clean_approach =
+        truncate_with_ellipsis(&sanitize_text(&record.attempted_approach), MAX_APPROACH_LEN);
+    let clean_reason =
+        truncate_with_ellipsis(&sanitize_text(&record.failure_reason), MAX_REASON_LEN);
     let clean_sig = truncate_with_ellipsis(
         &sanitize_text(&record.verification_evidence.error_signature),
         MAX_SIGNATURE_LEN,
@@ -101,10 +97,8 @@ pub fn fence_tombstone(record: &TombstoneRecord, provenance: Provenance) -> Stri
 
 /// Formatter that fences an InvariantContract into safe markdown for LLM inspection
 pub fn fence_invariant(contract: &InvariantContract, provenance: Provenance) -> String {
-    let clean_assertion = truncate_with_ellipsis(
-        &sanitize_text(&contract.assertion),
-        MAX_REASON_LEN,
-    );
+    let clean_assertion =
+        truncate_with_ellipsis(&sanitize_text(&contract.assertion), MAX_REASON_LEN);
 
     format!(
         "<!-- CORTEX_INVARIANT_BEGIN id=\"{}\" severity=\"{:?}\" provenance=\"{}\" -->\n\

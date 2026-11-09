@@ -35,16 +35,19 @@ impl CortexLedger {
     pub fn current_commit<'a>(repo: &'a Repository) -> Result<Option<Commit<'a>>> {
         match repo.find_reference(LEDGER_REF) {
             Ok(reference) => {
-                let target = reference
-                    .target()
-                    .ok_or_else(|| CortexError::Git(format!("Reference {} has no target", LEDGER_REF)))?;
-                let commit = repo
-                    .find_commit(target)
-                    .map_err(|e| CortexError::Git(format!("Failed to find commit {}: {}", target, e)))?;
+                let target = reference.target().ok_or_else(|| {
+                    CortexError::Git(format!("Reference {} has no target", LEDGER_REF))
+                })?;
+                let commit = repo.find_commit(target).map_err(|e| {
+                    CortexError::Git(format!("Failed to find commit {}: {}", target, e))
+                })?;
                 Ok(Some(commit))
             }
             Err(e) if e.code() == git2::ErrorCode::NotFound => Ok(None),
-            Err(e) => Err(CortexError::Git(format!("Failed to lookup {}: {}", LEDGER_REF, e))),
+            Err(e) => Err(CortexError::Git(format!(
+                "Failed to lookup {}: {}",
+                LEDGER_REF, e
+            ))),
         }
     }
 
@@ -73,9 +76,9 @@ impl CortexLedger {
 
         // Helper to insert nested paths into git tree
         for record in records {
-            let blob_oid = repo
-                .blob(record.json.as_bytes())
-                .map_err(|e| CortexError::Git(format!("Failed to create blob for {}: {}", record.id, e)))?;
+            let blob_oid = repo.blob(record.json.as_bytes()).map_err(|e| {
+                CortexError::Git(format!("Failed to create blob for {}: {}", record.id, e))
+            })?;
 
             let path = record.tree_path();
             insert_entry_at_path(repo, &mut builder, &path, blob_oid)?;
@@ -94,22 +97,8 @@ impl CortexLedger {
         let message = format!("cortex: append {} records to ledger", records.len());
 
         let commit_oid = match &parent_commit {
-            Some(parent) => repo.commit(
-                Some(LEDGER_REF),
-                &sig,
-                &sig,
-                &message,
-                &tree,
-                &[parent],
-            ),
-            None => repo.commit(
-                Some(LEDGER_REF),
-                &sig,
-                &sig,
-                &message,
-                &tree,
-                &[],
-            ),
+            Some(parent) => repo.commit(Some(LEDGER_REF), &sig, &sig, &message, &tree, &[parent]),
+            None => repo.commit(Some(LEDGER_REF), &sig, &sig, &message, &tree, &[]),
         }
         .map_err(|e| CortexError::Git(format!("Failed to create ledger commit: {}", e)))?;
 
@@ -239,7 +228,12 @@ fn walk_tree_and_index(
             } else if kind == "INVARIANT" {
                 if let Ok(contract) = serde_json::from_str::<InvariantContract>(content) {
                     let mut sym_tuples = Vec::new();
-                    let guarded_path = contract.guarded_symbol.symbol_uri.split('#').next().unwrap_or("");
+                    let guarded_path = contract
+                        .guarded_symbol
+                        .symbol_uri
+                        .split('#')
+                        .next()
+                        .unwrap_or("");
                     sym_tuples.push((
                         contract.guarded_symbol.symbol_uri.as_str(),
                         guarded_path,

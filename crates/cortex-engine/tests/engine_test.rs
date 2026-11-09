@@ -20,10 +20,13 @@ fn setup_repo() -> (TempDir, CortexRepo, CortexDb) {
     .unwrap();
 
     let mut index = repo.index().unwrap();
-    index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None).unwrap();
+    index
+        .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+        .unwrap();
     let tree_id = index.write_tree().unwrap();
     let tree = repo.find_tree(tree_id).unwrap();
-    repo.commit(Some("HEAD"), &sig, &sig, "Initial", &tree, &[]).unwrap();
+    repo.commit(Some("HEAD"), &sig, &sig, "Initial", &tree, &[])
+        .unwrap();
 
     let cortex_repo = CortexRepo::discover(Some(temp.path())).unwrap();
     let db = CortexDb::open_in_memory().unwrap();
@@ -54,7 +57,9 @@ fn test_inspect_and_tombstone() {
 
     let inspect = inspect_symbol(&repo, &db, "src/calc.rs", Some("Calc::add")).unwrap();
     assert_eq!(inspect.active_tombstones.len(), 1);
-    assert!(inspect.formatted_markdown.contains("Tried bitwise addition"));
+    assert!(inspect
+        .formatted_markdown
+        .contains("Tried bitwise addition"));
     assert!(inspect.formatted_markdown.contains("Overflow panic"));
 }
 
@@ -89,7 +94,10 @@ fn test_invariant_violation_detection() {
     let report2 = verify_invariants(&repo, &db, DiffScope::WorkingTree).unwrap();
     assert!(!report2.passed);
     assert_eq!(report2.violations.len(), 1);
-    assert_eq!(report2.violations[0].guarded_symbol, "src/calc.rs#Calc::add");
+    assert_eq!(
+        report2.violations[0].guarded_symbol,
+        "src/calc.rs#Calc::add"
+    );
 }
 
 #[test]
@@ -124,5 +132,7 @@ fn test_handoff_and_budget() {
     assert_eq!(envelope.active_hypotheses.len(), 1);
 
     let a2a = format_a2a_task_envelope(&envelope, "task_1", "Optimize add").unwrap();
-    assert!(a2a.to_string().contains("https://git-cortex.dev/a2a-extension/v0.1"));
+    assert!(a2a
+        .to_string()
+        .contains("https://git-cortex.dev/a2a-extension/v0.1"));
 }

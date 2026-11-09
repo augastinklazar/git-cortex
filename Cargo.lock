@@ -246,6 +246,7 @@ dependencies = [
  "cortex-engine",
  "cortex-mcp",
  "cortex-storage",
+ "git2",
  "serde",
  "serde_json",
  "tempfile",

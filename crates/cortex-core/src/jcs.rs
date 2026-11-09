@@ -4,8 +4,7 @@ use sha2::{Digest, Sha256};
 
 /// Serialize a serde value into canonical JSON (RFC 8785)
 pub fn to_canonical_json<T: Serialize>(value: &T) -> Result<String> {
-    serde_jcs::to_string(value)
-        .map_err(|e| CortexError::Canonicalization(e.to_string()))
+    serde_jcs::to_string(value).map_err(|e| CortexError::Canonicalization(e.to_string()))
 }
 
 /// Compute SHA-256 digest over the RFC 8785 canonical JSON serialization

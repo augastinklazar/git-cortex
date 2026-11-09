@@ -55,7 +55,10 @@ fn scrub_high_entropy_words(text: &str, findings: &mut Vec<RedactionFinding>) ->
     let mut last_end = 0;
 
     // Scan words of length >= 32 with no whitespace
-    for mat in Regex::new(r"\b([A-Za-z0-9+/=_-]{32,})\b").unwrap().find_iter(text) {
+    for mat in Regex::new(r"\b([A-Za-z0-9+/=_-]{32,})\b")
+        .unwrap()
+        .find_iter(text)
+    {
         let word = mat.as_str();
         let is_pure_hex = word.chars().all(|c| c.is_ascii_hexdigit());
         let has_lower = word.chars().any(|c| c.is_ascii_lowercase());

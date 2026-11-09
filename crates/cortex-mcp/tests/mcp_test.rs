@@ -22,10 +22,13 @@ fn test_mcp_server_full_stdio_lifecycle() {
     .unwrap();
 
     let mut index = repo.index().unwrap();
-    index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None).unwrap();
+    index
+        .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+        .unwrap();
     let tree_id = index.write_tree().unwrap();
     let tree = repo.find_tree(tree_id).unwrap();
-    repo.commit(Some("HEAD"), &sig, &sig, "Initial", &tree, &[]).unwrap();
+    repo.commit(Some("HEAD"), &sig, &sig, "Initial", &tree, &[])
+        .unwrap();
 
     let cortex_repo = CortexRepo::discover(Some(temp.path())).unwrap();
     let db = CortexDb::open_in_memory().unwrap();
@@ -168,7 +171,10 @@ fn test_mcp_server_full_stdio_lifecycle() {
     server.run_stdio(input_cursor, &mut output_bytes);
 
     let output_str = String::from_utf8(output_bytes).unwrap();
-    let lines: Vec<&str> = output_str.lines().filter(|l| !l.trim().is_empty()).collect();
+    let lines: Vec<&str> = output_str
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .collect();
 
     assert_eq!(lines.len(), 9);
 
@@ -187,22 +193,32 @@ fn test_mcp_server_full_stdio_lifecycle() {
     let tmb_resp: serde_json::Value = serde_json::from_str(lines[3]).unwrap();
     assert_eq!(tmb_resp["id"], 4);
     assert_eq!(tmb_resp["result"]["isError"], false);
-    assert!(tmb_resp["result"]["content"][0]["text"].as_str().unwrap().contains("Recorded Tombstone"));
+    assert!(tmb_resp["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Recorded Tombstone"));
 
     // Verify inspect after tombstone
     let inspect_after: serde_json::Value = serde_json::from_str(lines[4]).unwrap();
     assert_eq!(inspect_after["id"], 5);
-    let text = inspect_after["result"]["content"][0]["text"].as_str().unwrap();
+    let text = inspect_after["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     assert!(text.contains("Tried multithreading without Arc"));
 
     // Verify handoff export
     let handoff_resp: serde_json::Value = serde_json::from_str(lines[6]).unwrap();
-    let handoff_text = handoff_resp["result"]["content"][0]["text"].as_str().unwrap();
+    let handoff_text = handoff_resp["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     assert!(handoff_text.contains("handoff_id"));
     assert!(handoff_text.contains("hnd_"));
 
     // Verify invariant check
     let inv_resp: serde_json::Value = serde_json::from_str(lines[8]).unwrap();
     assert_eq!(inv_resp["result"]["isError"], false);
-    assert!(inv_resp["result"]["content"][0]["text"].as_str().unwrap().contains("verified successfully"));
+    assert!(inv_resp["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("verified successfully"));
 }

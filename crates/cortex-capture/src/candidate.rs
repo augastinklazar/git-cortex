@@ -22,7 +22,8 @@ pub fn reconcile_candidates(
     let mut promoted_records = Vec::new();
 
     for cand in failed_candidates {
-        let symbols: Vec<TouchedSymbol> = serde_json::from_str(&cand.symbols_json).unwrap_or_default();
+        let symbols: Vec<TouchedSymbol> =
+            serde_json::from_str(&cand.symbols_json).unwrap_or_default();
         if symbols.is_empty() {
             continue;
         }
@@ -63,17 +64,15 @@ pub fn reconcile_candidates(
         }
 
         if all_reverted {
-            let latest_exec_id = cand
-                .exec_ids
-                .split(',')
-                .last()
-                .unwrap_or("")
-                .trim();
+            let latest_exec_id = cand.exec_ids.split(',').next_back().unwrap_or("").trim();
 
             let (cmd, sig) = if let Ok(Some(exec)) = db.get_exec(latest_exec_id) {
                 (exec.cmd, exec.signature)
             } else {
-                ("unknown test command".to_string(), "Test failed before revert".to_string())
+                (
+                    "unknown test command".to_string(),
+                    "Test failed before revert".to_string(),
+                )
             };
 
             let sym_uris: Vec<String> = symbols.iter().map(|s| s.symbol_uri.clone()).collect();

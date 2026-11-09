@@ -17,10 +17,13 @@ fn test_passive_capture_edit_fail_revert_cycle() {
     fs::write(&file, original_code).unwrap();
 
     let mut index = repo.index().unwrap();
-    index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None).unwrap();
+    index
+        .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+        .unwrap();
     let tree_id = index.write_tree().unwrap();
     let tree = repo.find_tree(tree_id).unwrap();
-    repo.commit(Some("HEAD"), &sig, &sig, "Initial", &tree, &[]).unwrap();
+    repo.commit(Some("HEAD"), &sig, &sig, "Initial", &tree, &[])
+        .unwrap();
 
     let cortex_repo = CortexRepo::discover(Some(temp.path())).unwrap();
     let mut db = CortexDb::open_in_memory().unwrap();

@@ -32,10 +32,20 @@ pub fn inspect_symbol(
     let source = if full_path.exists() {
         std::fs::read(&full_path).map_err(CortexError::Io)?
     } else {
-        let head = repo.repo.head().map_err(|e| CortexError::Git(e.to_string()))?;
-        let tree = head.peel_to_tree().map_err(|e| CortexError::Git(e.to_string()))?;
-        let entry = tree.get_path(Path::new(&norm_path)).map_err(|e| CortexError::Git(e.to_string()))?;
-        let blob = repo.repo.find_blob(entry.id()).map_err(|e| CortexError::Git(e.to_string()))?;
+        let head = repo
+            .repo
+            .head()
+            .map_err(|e| CortexError::Git(e.to_string()))?;
+        let tree = head
+            .peel_to_tree()
+            .map_err(|e| CortexError::Git(e.to_string()))?;
+        let entry = tree
+            .get_path(Path::new(&norm_path))
+            .map_err(|e| CortexError::Git(e.to_string()))?;
+        let blob = repo
+            .repo
+            .find_blob(entry.id())
+            .map_err(|e| CortexError::Git(e.to_string()))?;
         blob.content().to_vec()
     };
 
@@ -64,7 +74,8 @@ pub fn inspect_symbol(
             if let Ok(record) = serde_json::from_str::<TombstoneRecord>(&stored.json) {
                 if let Some(target_filter) = symbol_name {
                     let matches_filter = record.target_symbols.iter().any(|ts| {
-                        ts.symbol_uri.ends_with(target_filter) || ts.symbol_uri.contains(target_filter)
+                        ts.symbol_uri.ends_with(target_filter)
+                            || ts.symbol_uri.contains(target_filter)
                     });
                     if !matches_filter {
                         continue;
@@ -102,7 +113,10 @@ pub fn inspect_symbol(
             if let Ok(contract) = serde_json::from_str::<InvariantContract>(&stored.json) {
                 if let Some(target_filter) = symbol_name {
                     let matches_filter = contract.guarded_symbol.symbol_uri.contains(target_filter)
-                        || contract.upstream_dependencies.iter().any(|u| u.symbol_uri.contains(target_filter));
+                        || contract
+                            .upstream_dependencies
+                            .iter()
+                            .any(|u| u.symbol_uri.contains(target_filter));
                     if !matches_filter {
                         continue;
                     }
@@ -114,7 +128,10 @@ pub fn inspect_symbol(
                 if let Some(curr_hash) = symbol_map.get(&contract.guarded_symbol.symbol_uri) {
                     if curr_hash != &contract.guarded_symbol.ast_hash {
                         is_active = false;
-                        changed.push(format!("Guarded symbol {} modified", contract.guarded_symbol.symbol_uri));
+                        changed.push(format!(
+                            "Guarded symbol {} modified",
+                            contract.guarded_symbol.symbol_uri
+                        ));
                     }
                 }
 

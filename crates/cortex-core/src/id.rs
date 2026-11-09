@@ -52,8 +52,7 @@ impl PrefixedId {
             return Err(CortexError::InvalidId(s.to_string(), p));
         }
         let ulid_part = &s[p.len()..];
-        Ulid::from_string(ulid_part)
-            .map_err(|_| CortexError::InvalidId(s.to_string(), p))?;
+        Ulid::from_string(ulid_part).map_err(|_| CortexError::InvalidId(s.to_string(), p))?;
         Ok(Self { raw: s.to_string() })
     }
 
@@ -103,7 +102,10 @@ impl FromStr for PrefixedId {
                 return Ok(id);
             }
         }
-        Err(CortexError::InvalidId(s.to_string(), "known prefix (tmb_, hnd_, inv_, chk_, cand_, evt_)"))
+        Err(CortexError::InvalidId(
+            s.to_string(),
+            "known prefix (tmb_, hnd_, inv_, chk_, cand_, evt_)",
+        ))
     }
 }
 

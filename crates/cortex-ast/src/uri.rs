@@ -28,8 +28,14 @@ mod tests {
 
     #[test]
     fn test_normalize_path() {
-        assert_eq!(normalize_rel_path(Path::new("src\\auth\\token.ts")), "src/auth/token.ts");
-        assert_eq!(normalize_rel_path(Path::new("./crates/lib/src/main.rs")), "crates/lib/src/main.rs");
+        assert_eq!(
+            normalize_rel_path(Path::new("src\\auth\\token.ts")),
+            "src/auth/token.ts"
+        );
+        assert_eq!(
+            normalize_rel_path(Path::new("./crates/lib/src/main.rs")),
+            "crates/lib/src/main.rs"
+        );
     }
 
     #[test]

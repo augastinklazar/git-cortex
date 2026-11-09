@@ -16,7 +16,11 @@ fn test_sub_15ms_on_large_file() {
     large_src.push_str("}\n");
 
     let line_count = large_src.lines().count();
-    assert!(line_count >= 10000, "Should have 10,000 lines, actual: {}", line_count);
+    assert!(
+        line_count >= 10000,
+        "Should have 10,000 lines, actual: {}",
+        line_count
+    );
 
     let start = Instant::now();
     let symbols = extract_symbols(Path::new("src/services/huge.ts"), large_src.as_bytes()).unwrap();

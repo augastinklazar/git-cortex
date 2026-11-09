@@ -20,10 +20,9 @@ pub fn rewind_to_checkpoint(
     reason: Option<&str>,
 ) -> Result<RewindResult> {
     let checkpoint_ref = format!("refs/cortex/checkpoints/{}", checkpoint_id);
-    let _check_reference = repo
-        .repo
-        .find_reference(&checkpoint_ref)
-        .map_err(|e| CortexError::Rewind(format!("Checkpoint {} not found: {}", checkpoint_id, e)))?;
+    let _check_reference = repo.repo.find_reference(&checkpoint_ref).map_err(|e| {
+        CortexError::Rewind(format!("Checkpoint {} not found: {}", checkpoint_id, e))
+    })?;
 
     // Step 0: Backup current dirty/aborted state safely so user work is never destroyed!
     let backup_id = PrefixedId::new(IdPrefix::Checkpoint).to_string();

@@ -41,12 +41,7 @@ pub fn promote_local_records(repo: &CortexRepo, db: &mut CortexDb) -> Result<usi
         .and_then(|c| c.get_string("user.email").ok())
         .unwrap_or_else(|| "cortex@git-cortex.dev".to_string());
 
-    CortexLedger::append_records(
-        &repo.repo,
-        &ledger_records,
-        &author_name,
-        &author_email,
-    )?;
+    CortexLedger::append_records(&repo.repo, &ledger_records, &author_name, &author_email)?;
 
     // Mark as promoted in SQLite
     for r in ledger_records {

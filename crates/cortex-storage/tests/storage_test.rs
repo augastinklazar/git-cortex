@@ -24,13 +24,9 @@ fn test_ledger_append_and_reindex() {
         json: r#"{"$schema":"https://git-cortex.dev/schemas/v0.1/tombstone.json","id":"tmb_01TEST123456789","schema_version":"0.1.0","created_at":"2026-11-09T09:30:00Z","author_harness":"test","branch_context":"main","base_commit_sha":"0000","capture_mode":"MANUAL","target_symbols":[{"symbol_uri":"src/lib.rs#test","ast_hash":"ast:sha256:1111"}],"attempted_approach":"test approach","failure_reason":"test failure","verification_evidence":{"command":"cargo test","exit_code":1,"error_signature":"err"},"invalidation_policy":{"invalidate_on_any_ast_change":[],"status":"ACTIVE"}}"#.to_string(),
     };
 
-    let commit_oid = CortexLedger::append_records(
-        &repo,
-        &[record],
-        "Test Author",
-        "author@example.com",
-    )
-    .unwrap();
+    let commit_oid =
+        CortexLedger::append_records(&repo, &[record], "Test Author", "author@example.com")
+            .unwrap();
 
     assert!(!commit_oid.is_zero());
 
@@ -78,7 +74,10 @@ fn test_snapshot_and_restore() {
     let untracked = temp.path().join("junk.tmp");
     fs::write(&untracked, "untracked junk").unwrap();
 
-    assert_eq!(fs::read_to_string(&file_path).unwrap(), "version 2 (broken)");
+    assert_eq!(
+        fs::read_to_string(&file_path).unwrap(),
+        "version 2 (broken)"
+    );
     assert!(untracked.exists());
 
     // Restore

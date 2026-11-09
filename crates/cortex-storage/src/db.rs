@@ -2,13 +2,14 @@ use crate::migrations::apply_migrations;
 use cortex_core::error::{CortexError, Result};
 use cortex_core::schema::{ActiveHypothesis, CallGraphEdge};
 use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub struct CortexDb {
     conn: Connection,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredRecord {
     pub id: String,
     pub kind: String,
@@ -20,7 +21,7 @@ pub struct StoredRecord {
     pub content_hash: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredCandidate {
     pub id: String,
     pub state: String,
@@ -31,7 +32,7 @@ pub struct StoredCandidate {
     pub created_at: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredExec {
     pub id: String,
     pub cmd: String,
@@ -44,7 +45,6 @@ pub struct StoredExec {
 }
 
 impl CortexDb {
-    /// Open SQLite database at given path, running migrations
     pub fn open(db_path: &Path) -> Result<Self> {
         let mut conn = Connection::open(db_path)
             .map_err(|e| CortexError::Database(format!("Failed to open state.db: {}", e)))?;
@@ -54,7 +54,6 @@ impl CortexDb {
         Ok(Self { conn })
     }
 
-    /// Open an in-memory database for tests
     pub fn open_in_memory() -> Result<Self> {
         let mut conn = Connection::open_in_memory()
             .map_err(|e| CortexError::Database(format!("Failed to open memory db: {}", e)))?;
@@ -64,7 +63,7 @@ impl CortexDb {
         Ok(Self { conn })
     }
 
-    /// Insert or replace a record (Tombstone, Invariant, or Event)
+    #[allow(clippy::too_many_arguments)]
     pub fn save_record(
         &mut self,
         id: &str,
@@ -104,11 +103,10 @@ impl CortexDb {
         Ok(())
     }
 
-    /// Index symbol associations for a record
     pub fn index_record_symbols(
         &mut self,
         record_id: &str,
-        symbols: &[(&str, &str, &str, &str)], // (symbol_uri, path, ast_hash, role)
+        symbols: &[(&str, &str, &str, &str)],
     ) -> Result<()> {
         let tx = self
             .conn
@@ -137,7 +135,6 @@ impl CortexDb {
         Ok(())
     }
 
-    /// Query records referencing a given path
     pub fn query_records_by_path(&self, path: &str) -> Result<Vec<StoredRecord>> {
         let mut stmt = self
             .conn
@@ -174,7 +171,6 @@ impl CortexDb {
         Ok(results)
     }
 
-    /// Query records referencing a specific symbol URI
     pub fn query_records_by_symbol(&self, symbol_uri: &str) -> Result<Vec<StoredRecord>> {
         let mut stmt = self
             .conn
@@ -211,7 +207,6 @@ impl CortexDb {
         Ok(results)
     }
 
-    /// Get a record by ID
     pub fn get_record(&self, id: &str) -> Result<Option<StoredRecord>> {
         let mut stmt = self
             .conn
@@ -236,13 +231,14 @@ impl CortexDb {
             .map_err(|e| CortexError::Database(e.to_string()))?;
 
         if let Some(first) = rows.next() {
-            Ok(Some(first.map_err(|e| CortexError::Database(e.to_string()))?))
+            Ok(Some(
+                first.map_err(|e| CortexError::Database(e.to_string()))?,
+            ))
         } else {
             Ok(None)
         }
     }
 
-    /// List all records of a given kind
     pub fn list_records_by_kind(&self, kind: &str) -> Result<Vec<StoredRecord>> {
         let mut stmt = self
             .conn
@@ -273,7 +269,6 @@ impl CortexDb {
         Ok(results)
     }
 
-    /// Record a file read event
     pub fn record_file_read(&mut self, path: &str, blob_oid: &str, branch: &str) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn
@@ -291,7 +286,6 @@ impl CortexDb {
         Ok(())
     }
 
-    /// Get all file reads for a branch
     pub fn get_file_reads(&self, branch: &str) -> Result<Vec<(String, String)>> {
         let mut stmt = self
             .conn
@@ -309,7 +303,6 @@ impl CortexDb {
         Ok(list)
     }
 
-    /// Save call graph edge
     pub fn save_call_graph_edge(&mut self, edge: &CallGraphEdge, branch: &str) -> Result<()> {
         self.conn
             .execute(
@@ -332,7 +325,6 @@ impl CortexDb {
         Ok(())
     }
 
-    /// Get call graph edges for a branch
     pub fn get_call_graph_edges(&self, branch: &str) -> Result<Vec<CallGraphEdge>> {
         let mut stmt = self
             .conn
@@ -357,7 +349,6 @@ impl CortexDb {
         Ok(edges)
     }
 
-    /// Save hypothesis
     pub fn save_hypothesis(&mut self, hyp: &ActiveHypothesis, branch: &str) -> Result<()> {
         self.conn
             .execute(
@@ -383,7 +374,6 @@ impl CortexDb {
         Ok(())
     }
 
-    /// Get hypotheses for a branch
     pub fn get_hypotheses(&self, branch: &str) -> Result<Vec<ActiveHypothesis>> {
         let mut stmt = self
             .conn
@@ -409,7 +399,6 @@ impl CortexDb {
         Ok(hyps)
     }
 
-    /// Insert an exec run
     pub fn insert_exec(&mut self, exec: &StoredExec) -> Result<()> {
         self.conn
             .execute(
@@ -432,7 +421,6 @@ impl CortexDb {
         Ok(())
     }
 
-    /// Insert or update candidate failure
     pub fn save_candidate(&mut self, candidate: &StoredCandidate) -> Result<()> {
         self.conn
             .execute(
@@ -458,7 +446,6 @@ impl CortexDb {
         Ok(())
     }
 
-    /// Get all candidates in a given state (e.g. "PENDING", "FAILED")
     pub fn get_candidates_by_state(&self, state: &str) -> Result<Vec<StoredCandidate>> {
         let mut stmt = self
             .conn
@@ -486,7 +473,6 @@ impl CortexDb {
         Ok(results)
     }
 
-    /// Get exec by id
     pub fn get_exec(&self, id: &str) -> Result<Option<StoredExec>> {
         let mut stmt = self
             .conn
@@ -513,38 +499,5 @@ impl CortexDb {
         } else {
             Ok(None)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_db_roundtrip() {
-        let mut db = CortexDb::open_in_memory().unwrap();
-        db.save_record(
-            "tmb_01",
-            "TOMBSTONE",
-            r#"{"id":"tmb_01"}"#,
-            "LOCAL",
-            false,
-            "main",
-            "sha256:1234",
-        )
-        .unwrap();
-
-        db.index_record_symbols(
-            "tmb_01",
-            &[("src/auth.ts#TokenManager", "src/auth.ts", "ast:123", "TARGET")],
-        )
-        .unwrap();
-
-        let recs = db.query_records_by_path("src/auth.ts").unwrap();
-        assert_eq!(recs.len(), 1);
-        assert_eq!(recs[0].id, "tmb_01");
-
-        let by_sym = db.query_records_by_symbol("src/auth.ts#TokenManager").unwrap();
-        assert_eq!(by_sym.len(), 1);
     }
 }

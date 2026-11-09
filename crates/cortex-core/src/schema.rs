@@ -28,19 +28,14 @@ pub struct InvalidationPolicy {
     pub status: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum CaptureMode {
     AutoRevertDetected,
+    #[default]
     Manual,
     RewindSynthesized,
     HookEnforced,
-}
-
-impl Default for CaptureMode {
-    fn default() -> Self {
-        Self::Manual
-    }
 }
 
 /// A Tombstone captures a disproved hypothesis or failed modification
@@ -66,6 +61,7 @@ pub struct TombstoneRecord {
 }
 
 impl TombstoneRecord {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: String,
         author_harness: String,
@@ -191,6 +187,7 @@ pub struct InvariantContract {
 }
 
 impl InvariantContract {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         invariant_id: String,
         commit_sha: String,

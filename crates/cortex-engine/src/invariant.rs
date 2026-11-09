@@ -205,16 +205,20 @@ fn read_symbols_by_scope(
             }
         }
         DiffScope::Staged => {
-            let index = repo.repo.index().map_err(|e| CortexError::Git(e.to_string()))?;
+            let index = repo
+                .repo
+                .index()
+                .map_err(|e| CortexError::Git(e.to_string()))?;
             if let Some(entry) = index.get_path(Path::new(rel_path), 0) {
-                let blob = repo.repo.find_blob(entry.id).map_err(|e| CortexError::Git(e.to_string()))?;
+                let blob = repo
+                    .repo
+                    .find_blob(entry.id)
+                    .map_err(|e| CortexError::Git(e.to_string()))?;
                 extract_symbols(Path::new(rel_path), blob.content())
             } else {
                 read_symbols_by_scope(repo, rel_path, DiffScope::WorkingTree)
             }
         }
-        DiffScope::Branch => {
-            read_symbols_by_scope(repo, rel_path, DiffScope::WorkingTree)
-        }
+        DiffScope::Branch => read_symbols_by_scope(repo, rel_path, DiffScope::WorkingTree),
     }
 }

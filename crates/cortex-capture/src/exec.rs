@@ -9,11 +9,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Instant;
 
-pub fn execute_command(
-    repo: &CortexRepo,
-    db: &mut CortexDb,
-    cmd_args: &[String],
-) -> Result<i32> {
+pub fn execute_command(repo: &CortexRepo, db: &mut CortexDb, cmd_args: &[String]) -> Result<i32> {
     if cmd_args.is_empty() {
         return Err(CortexError::Other("Empty command specified".to_string()));
     }
@@ -104,19 +100,14 @@ pub fn execute_command(
 
 fn find_dirty_symbols(repo: &CortexRepo) -> Result<Vec<TouchedSymbol>> {
     let mut status_opts = git2::StatusOptions::new();
-    status_opts
-        .include_untracked(false)
-        .include_ignored(false);
+    status_opts.include_untracked(false).include_ignored(false);
 
     let statuses = repo
         .repo
         .statuses(Some(&mut status_opts))
         .map_err(|e| CortexError::Git(e.to_string()))?;
 
-    let head_tree = match repo.repo.head().and_then(|h| h.peel_to_tree()) {
-        Ok(t) => Some(t),
-        Err(_) => None,
-    };
+    let head_tree = repo.repo.head().and_then(|h| h.peel_to_tree()).ok();
 
     let mut touched = Vec::new();
 

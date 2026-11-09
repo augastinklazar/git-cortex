@@ -44,7 +44,8 @@ impl McpServer {
             let req: JsonRpcRequest = match serde_json::from_str(trimmed) {
                 Ok(r) => r,
                 Err(e) => {
-                    let err_resp = JsonRpcResponse::error(None, -32700, format!("Parse error: {}", e));
+                    let err_resp =
+                        JsonRpcResponse::error(None, -32700, format!("Parse error: {}", e));
                     let _ = writeln!(writer, "{}", serde_json::to_string(&err_resp).unwrap());
                     let _ = writer.flush();
                     continue;
@@ -66,8 +67,14 @@ impl McpServer {
             "initialize" => {
                 if let Some(params) = &req.params {
                     if let Some(client_info) = params.get("clientInfo") {
-                        let name = client_info.get("name").and_then(|v| v.as_str()).unwrap_or("agent");
-                        let version = client_info.get("version").and_then(|v| v.as_str()).unwrap_or("1.0");
+                        let name = client_info
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("agent");
+                        let version = client_info
+                            .get("version")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("1.0");
                         self.client_harness = format!("{}/{}", name, version);
                     }
                 }
@@ -116,7 +123,11 @@ impl McpServer {
             "cortex_inspect_symbol" => {
                 let filepath = match args.get("filepath").and_then(|v| v.as_str()) {
                     Some(f) => f,
-                    None => return ToolResult::error("Missing required parameter 'filepath'".to_string()),
+                    None => {
+                        return ToolResult::error(
+                            "Missing required parameter 'filepath'".to_string(),
+                        )
+                    }
                 };
                 let symbol_name = args.get("symbol_name").and_then(|v| v.as_str());
 
@@ -127,24 +138,39 @@ impl McpServer {
             }
             "cortex_record_tombstone" => {
                 let target_symbols: Vec<String> = match args.get("target_symbols") {
-                    Some(Value::Array(arr)) => {
-                        arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
+                    Some(Value::Array(arr)) => arr
+                        .iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect(),
+                    _ => {
+                        return ToolResult::error("Missing or invalid 'target_symbols'".to_string())
                     }
-                    _ => return ToolResult::error("Missing or invalid 'target_symbols'".to_string()),
                 };
 
                 let approach = match args.get("attempted_approach").and_then(|v| v.as_str()) {
                     Some(a) => a,
-                    None => return ToolResult::error("Missing required 'attempted_approach'".to_string()),
+                    None => {
+                        return ToolResult::error(
+                            "Missing required 'attempted_approach'".to_string(),
+                        )
+                    }
                 };
 
                 let reason = match args.get("failure_reason").and_then(|v| v.as_str()) {
                     Some(r) => r,
-                    None => return ToolResult::error("Missing required 'failure_reason'".to_string()),
+                    None => {
+                        return ToolResult::error("Missing required 'failure_reason'".to_string())
+                    }
                 };
 
-                let test_cmd = args.get("test_command").and_then(|v| v.as_str()).unwrap_or("");
-                let error_sig = args.get("error_signature").and_then(|v| v.as_str()).unwrap_or("");
+                let test_cmd = args
+                    .get("test_command")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let error_sig = args
+                    .get("error_signature")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
 
                 match record_tombstone(
                     &self.repo,
@@ -194,14 +220,19 @@ impl McpServer {
             "cortex_handoff_pack" => {
                 let mode = match args.get("mode").and_then(|v| v.as_str()) {
                     Some(m) => m,
-                    None => return ToolResult::error("Missing required 'mode' (IMPORT or EXPORT)".to_string()),
+                    None => {
+                        return ToolResult::error(
+                            "Missing required 'mode' (IMPORT or EXPORT)".to_string(),
+                        )
+                    }
                 };
 
                 if mode.eq_ignore_ascii_case("EXPORT") {
                     let branch = args.get("branch").and_then(|v| v.as_str());
                     match create_handoff_envelope(&self.repo, &self.db, branch, None) {
                         Ok(envelope) => {
-                            let json_str = serde_json::to_string_pretty(&envelope).unwrap_or_default();
+                            let json_str =
+                                serde_json::to_string_pretty(&envelope).unwrap_or_default();
                             ToolResult::ok(json_str)
                         }
                         Err(e) => ToolResult::error(format!("Export failed: {}", e)),
@@ -209,18 +240,34 @@ impl McpServer {
                 } else if mode.eq_ignore_ascii_case("IMPORT") {
                     let envelope_val = match args.get("envelope") {
                         Some(val) => val,
-                        None => return ToolResult::error("Missing 'envelope' payload for IMPORT mode".to_string()),
+                        None => {
+                            return ToolResult::error(
+                                "Missing 'envelope' payload for IMPORT mode".to_string(),
+                            )
+                        }
                     };
 
                     match serde_json::from_value(envelope_val.clone()) {
                         Ok(envelope) => {
-                            let branch = self.repo.current_branch().unwrap_or_else(|_| "main".to_string());
-                            match import_handoff_envelope(&self.repo, &mut self.db, &envelope, &branch) {
-                                Ok(_) => ToolResult::ok("Epistemic handoff imported successfully.".to_string()),
+                            let branch = self
+                                .repo
+                                .current_branch()
+                                .unwrap_or_else(|_| "main".to_string());
+                            match import_handoff_envelope(
+                                &self.repo,
+                                &mut self.db,
+                                &envelope,
+                                &branch,
+                            ) {
+                                Ok(_) => ToolResult::ok(
+                                    "Epistemic handoff imported successfully.".to_string(),
+                                ),
                                 Err(e) => ToolResult::error(format!("Import failed: {}", e)),
                             }
                         }
-                        Err(e) => ToolResult::error(format!("Invalid handoff envelope JSON: {}", e)),
+                        Err(e) => {
+                            ToolResult::error(format!("Invalid handoff envelope JSON: {}", e))
+                        }
                     }
                 } else {
                     ToolResult::error("Invalid mode: expected 'IMPORT' or 'EXPORT'".to_string())
@@ -269,12 +316,18 @@ impl McpServer {
                 };
                 let test_cmd = match args.get("verification_test_cmd").and_then(|v| v.as_str()) {
                     Some(t) => t,
-                    None => return ToolResult::error("Missing 'verification_test_cmd'".to_string()),
+                    None => {
+                        return ToolResult::error("Missing 'verification_test_cmd'".to_string())
+                    }
                 };
                 let upstream: Vec<String> = args
                     .get("upstream_dependencies")
                     .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
                     .unwrap_or_default();
 
                 let severity = match args.get("severity").and_then(|v| v.as_str()) {

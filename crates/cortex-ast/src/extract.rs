@@ -127,7 +127,9 @@ fn walk_and_extract(
                 }
             }
         }
-        (Language::Rust, "struct_item") | (Language::Rust, "enum_item") | (Language::Rust, "trait_item") => {
+        (Language::Rust, "struct_item")
+        | (Language::Rust, "enum_item")
+        | (Language::Rust, "trait_item") => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 if let Ok(name) = name_node.utf8_text(source) {
                     let scope = build_scope(scope_stack, name, sep);
@@ -171,7 +173,14 @@ fn walk_and_extract(
             if let Some(name_node) = node.child_by_field_name("name") {
                 if let Ok(name) = name_node.utf8_text(source) {
                     let scope = build_scope(scope_stack, name, sep);
-                    record_symbol(node, source, rel_path, scope.clone(), SymbolKind::Class, symbols);
+                    record_symbol(
+                        node,
+                        source,
+                        rel_path,
+                        scope.clone(),
+                        SymbolKind::Class,
+                        symbols,
+                    );
                     entered_scope = Some(name.to_string());
                 }
             }
@@ -180,7 +189,14 @@ fn walk_and_extract(
             if let Some(name_node) = node.child_by_field_name("name") {
                 if let Ok(name) = name_node.utf8_text(source) {
                     let scope = build_scope(scope_stack, name, sep);
-                    record_symbol(node, source, rel_path, scope.clone(), SymbolKind::Interface, symbols);
+                    record_symbol(
+                        node,
+                        source,
+                        rel_path,
+                        scope.clone(),
+                        SymbolKind::Interface,
+                        symbols,
+                    );
                     entered_scope = Some(name.to_string());
                 }
             }
@@ -218,7 +234,14 @@ fn walk_and_extract(
             if let Some(name_node) = node.child_by_field_name("name") {
                 if let Ok(name) = name_node.utf8_text(source) {
                     let scope = build_scope(scope_stack, name, sep);
-                    record_symbol(node, source, rel_path, scope.clone(), SymbolKind::Class, symbols);
+                    record_symbol(
+                        node,
+                        source,
+                        rel_path,
+                        scope.clone(),
+                        SymbolKind::Class,
+                        symbols,
+                    );
                     entered_scope = Some(name.to_string());
                 }
             }
@@ -253,7 +276,14 @@ fn walk_and_extract(
                     if let Some(name_node) = spec.child_by_field_name("name") {
                         if let Ok(name) = name_node.utf8_text(source) {
                             let scope = build_scope(scope_stack, name, sep);
-                            record_symbol(node, source, rel_path, scope, SymbolKind::Struct, symbols);
+                            record_symbol(
+                                node,
+                                source,
+                                rel_path,
+                                scope,
+                                SymbolKind::Struct,
+                                symbols,
+                            );
                         }
                     }
                 }
