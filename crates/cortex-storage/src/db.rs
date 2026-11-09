@@ -399,6 +399,41 @@ impl CortexDb {
         Ok(hyps)
     }
 
+    pub fn get_cached_symbols(&self, path: &str, blob_oid: &str) -> Result<Option<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT symbols_json FROM symbol_cache WHERE path = ?1 AND blob_oid = ?2")
+            .map_err(|e| CortexError::Database(e.to_string()))?;
+        let mut rows = stmt
+            .query(params![path, blob_oid])
+            .map_err(|e| CortexError::Database(e.to_string()))?;
+        if let Some(row) = rows
+            .next()
+            .map_err(|e| CortexError::Database(e.to_string()))?
+        {
+            let json: String = row
+                .get(0)
+                .map_err(|e| CortexError::Database(e.to_string()))?;
+            Ok(Some(json))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn set_cached_symbols(&self, path: &str, blob_oid: &str, symbols_json: &str) -> Result<()> {
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO symbol_cache (path, blob_oid, symbols_json)
+                VALUES (?1, ?2, ?3)
+                ON CONFLICT(path, blob_oid) DO UPDATE SET symbols_json = excluded.symbols_json
+                "#,
+                params![path, blob_oid, symbols_json],
+            )
+            .map_err(|e| CortexError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     pub fn insert_exec(&mut self, exec: &StoredExec) -> Result<()> {
         self.conn
             .execute(

@@ -49,7 +49,18 @@ pub fn inspect_symbol(
         blob.content().to_vec()
     };
 
-    let symbols = extract_symbols(Path::new(&norm_path), &source)?;
+    let blob_oid = cortex_core::jcs::sha256_digest(&source);
+    let symbols = if let Ok(Some(cached_json)) = db.get_cached_symbols(&norm_path, &blob_oid) {
+        serde_json::from_str::<Vec<cortex_ast::Symbol>>(&cached_json)
+            .unwrap_or_else(|_| extract_symbols(Path::new(&norm_path), &source).unwrap_or_default())
+    } else {
+        let extracted = extract_symbols(Path::new(&norm_path), &source)?;
+        if let Ok(json) = serde_json::to_string(&extracted) {
+            let _ = db.set_cached_symbols(&norm_path, &blob_oid, &json);
+        }
+        extracted
+    };
+
     let mut symbol_map: HashMap<String, String> = HashMap::new();
     for sym in &symbols {
         symbol_map.insert(sym.uri.clone(), sym.ast_hash.clone());
