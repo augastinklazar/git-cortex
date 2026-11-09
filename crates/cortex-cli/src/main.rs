@@ -243,9 +243,9 @@ fn main() -> anyhow::Result<()> {
                     setup_mcp_config: mcp,
                 },
             )?;
-            println!("âœ¨ git-cortex initialized successfully!");
+            println!("✓ git-cortex initialized successfully!");
             for a in actions {
-                println!("  â€¢ {}", a);
+                println!("  • {}", a);
             }
         }
         Commands::Status { json } => {
@@ -308,7 +308,7 @@ fn main() -> anyhow::Result<()> {
                 println!("Symbols in {}:", norm_path);
                 for s in symbols {
                     println!(
-                        "  â€¢ {:<12} {:<40} {}",
+                        "  • {:<12} {:<40} {}",
                         format!("{:?}", s.kind),
                         s.scope_chain,
                         s.ast_hash
@@ -355,7 +355,7 @@ fn main() -> anyhow::Result<()> {
                 } else {
                     println!("Tombstones ({} total):", tombstones.len());
                     for t in tombstones {
-                        println!("  â€¢ {} | {} | {}", t.id, t.created_at, t.branch);
+                        println!("  • {} | {} | {}", t.id, t.created_at, t.branch);
                     }
                 }
             }
@@ -492,17 +492,17 @@ fn main() -> anyhow::Result<()> {
             let report = verify_invariants(&repo, &db, scope)?;
             if report.passed {
                 println!(
-                    "âœ“ All {} invariant contracts verified successfully against {:?}.",
+                    "✓ All {} invariant contracts verified successfully against {:?}.",
                     report.checked_count, scope
                 );
             } else {
                 eprintln!(
-                    "âŒ {} Invariant violation(s) detected in {:?}:",
+                    "❌ {} Invariant violation(s) detected in {:?}:",
                     report.violations.len(),
                     scope
                 );
                 for v in &report.violations {
-                    eprintln!("  â€¢ Invariant: {}", v.invariant_id);
+                    eprintln!("  • Invariant: {}", v.invariant_id);
                     eprintln!("    Guarded:   {}", v.guarded_symbol);
                     eprintln!("    Upstream:  {}", v.upstream_symbol);
                     eprintln!("    Assertion: {}", v.assertion);
