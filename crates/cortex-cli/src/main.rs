@@ -153,6 +153,12 @@ enum TombstoneCommands {
     },
     /// Show details of a Tombstone
     Show { id: String },
+    /// Revoke a Tombstone with an append-only lifecycle event
+    Revoke {
+        id: String,
+        #[arg(short = 'r', long, default_value = "Manual revocation via cortex cli")]
+        reason: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -174,6 +180,22 @@ enum InvariantCommands {
     List {
         #[arg(long)]
         json: bool,
+    },
+    /// Reaffirm an Invariant Contract with updated hashes and commit SHA
+    Reaffirm {
+        id: String,
+        #[arg(
+            short = 'r',
+            long,
+            default_value = "Manual reaffirmation via cortex cli"
+        )]
+        reason: String,
+    },
+    /// Revoke an Invariant Contract with an append-only lifecycle event
+    Revoke {
+        id: String,
+        #[arg(short = 'r', long, default_value = "Manual revocation via cortex cli")]
+        reason: String,
     },
 }
 
@@ -219,9 +241,9 @@ fn main() -> anyhow::Result<()> {
                     setup_mcp_config: mcp,
                 },
             )?;
-            println!("✨ git-cortex initialized successfully!");
+            println!("âœ¨ git-cortex initialized successfully!");
             for a in actions {
-                println!("  • {}", a);
+                println!("  â€¢ {}", a);
             }
         }
         Commands::Status { json } => {
@@ -284,7 +306,7 @@ fn main() -> anyhow::Result<()> {
                 println!("Symbols in {}:", norm_path);
                 for s in symbols {
                     println!(
-                        "  • {:<12} {:<40} {}",
+                        "  â€¢ {:<12} {:<40} {}",
                         format!("{:?}", s.kind),
                         s.scope_chain,
                         s.ast_hash
@@ -330,7 +352,7 @@ fn main() -> anyhow::Result<()> {
                 } else {
                     println!("Tombstones ({} total):", tombstones.len());
                     for t in tombstones {
-                        println!("  • {} | {} | {}", t.id, t.created_at, t.branch);
+                        println!("  â€¢ {} | {} | {}", t.id, t.created_at, t.branch);
                     }
                 }
             }
@@ -340,6 +362,13 @@ fn main() -> anyhow::Result<()> {
                 } else {
                     eprintln!("Tombstone '{}' not found", id);
                 }
+            }
+            TombstoneCommands::Revoke { id, reason } => {
+                let evt = cortex_engine::revoke_record(&repo, &mut db, &id, &reason, "cortex-cli")?;
+                println!(
+                    "Revoked Tombstone '{}' via LifecycleEvent '{}'.",
+                    id, evt.event_id
+                );
             }
         },
         Commands::Invariant { action } => match action {
@@ -372,6 +401,21 @@ fn main() -> anyhow::Result<()> {
                         println!("  • {} | {} | {}", inv.id, inv.created_at, inv.branch);
                     }
                 }
+            }
+            InvariantCommands::Reaffirm { id, reason } => {
+                let contract =
+                    cortex_engine::reaffirm_invariant(&repo, &mut db, &id, &reason, "cortex-cli")?;
+                println!(
+                    "Reaffirmed InvariantContract '{}'. Updated guarded hash: {}",
+                    contract.invariant_id, contract.guarded_symbol.ast_hash
+                );
+            }
+            InvariantCommands::Revoke { id, reason } => {
+                let evt = cortex_engine::revoke_record(&repo, &mut db, &id, &reason, "cortex-cli")?;
+                println!(
+                    "Revoked InvariantContract '{}' via LifecycleEvent '{}'.",
+                    id, evt.event_id
+                );
             }
         },
         Commands::Checkpoint { message } => {
@@ -445,17 +489,17 @@ fn main() -> anyhow::Result<()> {
             let report = verify_invariants(&repo, &db, scope)?;
             if report.passed {
                 println!(
-                    "✓ All {} invariant contracts verified successfully against {:?}.",
+                    "âœ“ All {} invariant contracts verified successfully against {:?}.",
                     report.checked_count, scope
                 );
             } else {
                 eprintln!(
-                    "❌ {} Invariant violation(s) detected in {:?}:",
+                    "âŒ {} Invariant violation(s) detected in {:?}:",
                     report.violations.len(),
                     scope
                 );
                 for v in &report.violations {
-                    eprintln!("  • Invariant: {}", v.invariant_id);
+                    eprintln!("  â€¢ Invariant: {}", v.invariant_id);
                     eprintln!("    Guarded:   {}", v.guarded_symbol);
                     eprintln!("    Upstream:  {}", v.upstream_symbol);
                     eprintln!("    Assertion: {}", v.assertion);

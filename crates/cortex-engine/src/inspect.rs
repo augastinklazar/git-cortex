@@ -56,6 +56,16 @@ pub fn inspect_symbol(
     }
 
     let records = db.query_records_by_path(&norm_path)?;
+    let events = db.list_records_by_kind("EVENT").unwrap_or_default();
+    let mut revoked_records = HashMap::new();
+    for evt_rec in events {
+        if let Ok(evt) = serde_json::from_str::<cortex_core::schema::LifecycleEvent>(&evt_rec.json)
+        {
+            if evt.event_type == cortex_core::schema::EventType::Revoke {
+                revoked_records.insert(evt.target_id, evt.reason);
+            }
+        }
+    }
 
     let mut active_tombstones = Vec::new();
     let mut stale_tombstones = Vec::new();
@@ -72,6 +82,14 @@ pub fn inspect_symbol(
 
         if stored.kind == "TOMBSTONE" {
             if let Ok(record) = serde_json::from_str::<TombstoneRecord>(&stored.json) {
+                if let Some(reason) = revoked_records.get(&record.id) {
+                    markdown_sections.push(format!(
+                        "<!-- REVOKED TOMBSTONE: {} (Reason: {}) -->",
+                        record.id, reason
+                    ));
+                    continue;
+                }
+
                 if let Some(target_filter) = symbol_name {
                     let matches_filter = record.target_symbols.iter().any(|ts| {
                         ts.symbol_uri.ends_with(target_filter)
@@ -111,6 +129,14 @@ pub fn inspect_symbol(
             }
         } else if stored.kind == "INVARIANT" {
             if let Ok(contract) = serde_json::from_str::<InvariantContract>(&stored.json) {
+                if let Some(reason) = revoked_records.get(&contract.invariant_id) {
+                    markdown_sections.push(format!(
+                        "<!-- REVOKED INVARIANT: {} (Reason: {}) -->",
+                        contract.invariant_id, reason
+                    ));
+                    continue;
+                }
+
                 if let Some(target_filter) = symbol_name {
                     let matches_filter = contract.guarded_symbol.symbol_uri.contains(target_filter)
                         || contract
