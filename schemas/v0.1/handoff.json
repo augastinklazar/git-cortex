@@ -44,7 +44,7 @@
         "properties": {
           "hypothesis_id": { "type": "string" },
           "statement": { "type": "string" },
-          "confidence": { "type": "number" },
+          "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
           "status": { "type": "string" },
           "next_verification_step": { "type": "string" }
         }
