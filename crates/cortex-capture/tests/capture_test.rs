@@ -111,3 +111,20 @@ fn test_baseline_failure_does_not_create_false_tombstone() {
     let candidates = db.get_candidates_by_state("FAILED").unwrap();
     assert_eq!(candidates.len(), 0);
 }
+
+#[test]
+fn test_pipe_drain_large_output_no_deadlock() {
+    let temp = TempDir::new().unwrap();
+    let _repo = Repository::init(temp.path()).unwrap();
+    let cortex_repo = CortexRepo::discover(Some(temp.path())).unwrap();
+    let mut db = CortexDb::open_in_memory().unwrap();
+
+    let cmd = vec![
+        "python".to_string(),
+        "-c".to_string(),
+        "import sys; sys.stdout.write('x' * 131072); sys.exit(0)".to_string(),
+    ];
+
+    let exit_code = execute_command(&cortex_repo, &mut db, &cmd, Some(5)).unwrap();
+    assert_eq!(exit_code, 0);
+}

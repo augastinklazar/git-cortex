@@ -25,6 +25,30 @@ function getBinaryName() {
   return { target, binaryName: `git-cortex${ext}` };
 }
 
+function findOnPathExcludingSelf(binaryName) {
+  const pathEnv = process.env.PATH || '';
+  const pathSep = process.platform === 'win32' ? ';' : ':';
+  let selfReal = '';
+  try {
+    selfReal = fs.realpathSync(__filename);
+  } catch (_) {
+    selfReal = __filename;
+  }
+
+  for (const dir of pathEnv.split(pathSep)) {
+    if (!dir) continue;
+    const candidate = path.join(dir, binaryName);
+    if (fs.existsSync(candidate)) {
+      try {
+        if (fs.realpathSync(candidate) !== selfReal) {
+          return candidate;
+        }
+      } catch (_) {}
+    }
+  }
+  return null;
+}
+
 function resolveBinary() {
   const { target, binaryName } = getBinaryName();
 
@@ -45,11 +69,24 @@ function resolveBinary() {
     return devBin;
   }
 
-  // 4. Fallback to system PATH
-  return binaryName;
+  // 4. Fallback to system PATH excluding this wrapper script
+  const onPath = findOnPathExcludingSelf(binaryName);
+  if (onPath) {
+    return onPath;
+  }
+
+  return null;
 }
 
 const binaryPath = resolveBinary();
+if (!binaryPath) {
+  const { binaryName } = getBinaryName();
+  console.error(`git-cortex native executable '${binaryName}' was not found.`);
+  console.error('Please install git-cortex via cargo or download a release binary:');
+  console.error('  cargo install --git https://github.com/augastinklazar/git-cortex cortex-cli');
+  process.exit(1);
+}
+
 const args = process.argv.slice(2);
 
 const result = spawnSync(binaryPath, args, {

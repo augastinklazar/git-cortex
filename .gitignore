@@ -25,3 +25,7 @@ desktop.ini
 node_modules/
 dist/
 *.tgz
+npm/binaries/
+
+# Documents & temporary reports
+*.pdf
