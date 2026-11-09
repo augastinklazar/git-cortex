@@ -86,3 +86,59 @@ fn test_snapshot_and_restore() {
     assert_eq!(fs::read_to_string(&file_path).unwrap(), "version 1");
     assert!(!untracked.exists(), "Untracked file should be cleaned");
 }
+
+#[test]
+fn test_snapshot_does_not_mutate_live_git_index() {
+    let temp = TempDir::new().unwrap();
+    let repo = Repository::init(temp.path()).unwrap();
+
+    let initial_file = temp.path().join("base.txt");
+    fs::write(&initial_file, "base content").unwrap();
+    let sig = git2::Signature::now("User", "user@example.com").unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(std::path::Path::new("base.txt")).unwrap();
+    let tree_id = index.write_tree().unwrap();
+    index.write().unwrap();
+    let tree = repo.find_tree(tree_id).unwrap();
+    repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+        .unwrap();
+
+    let untracked = temp.path().join("untracked.txt");
+    fs::write(&untracked, "untracked content").unwrap();
+    fs::write(&initial_file, "modified content").unwrap();
+
+    let idx_before = repo.index().unwrap();
+    assert_eq!(idx_before.len(), 1);
+    assert!(idx_before
+        .get_path(std::path::Path::new("untracked.txt"), 0)
+        .is_none());
+
+    let (_, snap_ref) = CortexSnapshot::create_snapshot(
+        &repo,
+        "checkpoints",
+        "chk_ISOLATED",
+        "checkpoint test",
+        "Test",
+        "test@example.com",
+    )
+    .unwrap();
+
+    let idx_after = repo.index().unwrap();
+    assert_eq!(
+        idx_after.len(),
+        1,
+        "Live index should not have added untracked.txt"
+    );
+    assert!(idx_after
+        .get_path(std::path::Path::new("untracked.txt"), 0)
+        .is_none());
+
+    let commit = repo
+        .find_reference(&snap_ref)
+        .unwrap()
+        .peel_to_commit()
+        .unwrap();
+    let snap_tree = commit.tree().unwrap();
+    assert!(snap_tree.get_name("untracked.txt").is_some());
+    assert!(snap_tree.get_name("base.txt").is_some());
+}
