@@ -142,3 +142,35 @@ fn test_snapshot_does_not_mutate_live_git_index() {
     assert!(snap_tree.get_name("untracked.txt").is_some());
     assert!(snap_tree.get_name("base.txt").is_some());
 }
+
+#[test]
+fn test_working_tree_dirty_hash_content_sensitive() {
+    let temp = TempDir::new().unwrap();
+    let repo = Repository::init(temp.path()).unwrap();
+
+    let sig = git2::Signature::now("User", "user@example.com").unwrap();
+    let file = temp.path().join("tracked.txt");
+    fs::write(&file, "initial").unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(std::path::Path::new("tracked.txt")).unwrap();
+    let tree_id = index.write_tree().unwrap();
+    index.write().unwrap();
+    let tree = repo.find_tree(tree_id).unwrap();
+    repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+        .unwrap();
+
+    let cortex_repo = CortexRepo::discover(Some(temp.path())).unwrap();
+    assert_eq!(cortex_repo.working_tree_dirty_hash().unwrap(), "wt:clean");
+
+    // Modify file
+    fs::write(&file, "first modification").unwrap();
+    let hash1 = cortex_repo.working_tree_dirty_hash().unwrap();
+    assert!(hash1.starts_with("wt:sha256:"));
+
+    // Modify file again (status is still WT_MODIFIED, but content differs)
+    fs::write(&file, "second modification").unwrap();
+    let hash2 = cortex_repo.working_tree_dirty_hash().unwrap();
+    assert!(hash2.starts_with("wt:sha256:"));
+
+    assert_ne!(hash1, hash2, "Content modifications must yield distinct dirty hashes");
+}
