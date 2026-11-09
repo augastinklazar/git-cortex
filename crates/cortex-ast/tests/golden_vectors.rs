@@ -189,3 +189,56 @@ fn test_unsupported_file_fallback() {
     assert_eq!(symbols[0].uri, "docs/README.md#<file>");
     assert_eq!(symbols[0].kind, SymbolKind::File);
 }
+
+#[test]
+fn test_operator_sensitivity_in_ast_hash() {
+    let src_add = b"fn calc(a: i32, b: i32) -> i32 { a + b }";
+    let src_sub = b"fn calc(a: i32, b: i32) -> i32 { a - b }";
+    let src_eq = b"fn check(a: i32, b: i32) -> bool { a == b }";
+    let src_ne = b"fn check(a: i32, b: i32) -> bool { a != b }";
+
+    let sym_add = extract_symbols(Path::new("math.rs"), src_add).unwrap();
+    let sym_sub = extract_symbols(Path::new("math.rs"), src_sub).unwrap();
+    let sym_eq = extract_symbols(Path::new("math.rs"), src_eq).unwrap();
+    let sym_ne = extract_symbols(Path::new("math.rs"), src_ne).unwrap();
+
+    assert_ne!(
+        sym_add[0].ast_hash, sym_sub[0].ast_hash,
+        "Operators + and - must produce distinct AST hashes"
+    );
+    assert_ne!(
+        sym_eq[0].ast_hash, sym_ne[0].ast_hash,
+        "Operators == and != must produce distinct AST hashes"
+    );
+}
+
+#[test]
+fn test_binary_fallback_hash_format() {
+    let binary_data = vec![0u8; 128];
+    let syms = extract_symbols(Path::new("data.bin"), &binary_data).unwrap();
+    assert_eq!(syms.len(), 1);
+    assert_eq!(syms[0].uri, "data.bin#<binary>");
+    assert!(syms[0].ast_hash.starts_with("ast:sha256:"));
+    assert_eq!(syms[0].ast_hash.len(), 27);
+    assert!(!syms[0].ast_hash.contains("sha256:sha256:"));
+}
+
+#[test]
+fn test_rust_trait_impl_scope_disambiguation() {
+    let src = br#"
+struct MyType;
+
+impl From<String> for MyType {
+    fn from(_: String) -> Self { MyType }
+}
+
+impl From<i32> for MyType {
+    fn from(_: i32) -> Self { MyType }
+}
+"#;
+    let syms = extract_symbols(Path::new("src/my_type.rs"), src).unwrap();
+    let scopes: Vec<&str> = syms.iter().map(|s| s.scope_chain.as_str()).collect();
+    assert!(
+        scopes.contains(&"MyType<as From>::from") || scopes.contains(&"MyType<as From>::from@2")
+    );
+}

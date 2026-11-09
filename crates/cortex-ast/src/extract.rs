@@ -1,4 +1,4 @@
-use crate::hash::{compute_ast_hash, compute_text_fallback_hash};
+use crate::hash::{compute_ast_hash_for_lang, compute_text_fallback_hash};
 use crate::lang::Language;
 use crate::uri::{format_symbol_uri, normalize_rel_path};
 use cortex_core::error::{CortexError, Result};
@@ -40,7 +40,7 @@ pub fn extract_symbols(rel_path: &Path, source: &[u8]) -> Result<Vec<Symbol>> {
             uri: format_symbol_uri(&norm_path, "<binary>"),
             scope_chain: "<binary>".to_string(),
             kind: SymbolKind::File,
-            ast_hash: format!("ast:sha256:{}", &hash[..16]),
+            ast_hash: format!("ast:sha256:{}", &hash[7..23]),
             byte_range: 0..source.len(),
             line_range: 1..2,
         }]);
@@ -128,6 +128,13 @@ fn walk_and_extract(
 
     match (lang, node.kind()) {
         // --- Rust ---
+        (Language::Rust, "mod_item") => {
+            if let Some(name_node) = node.child_by_field_name("name") {
+                if let Ok(name) = name_node.utf8_text(source) {
+                    entered_scope = Some(name.to_string());
+                }
+            }
+        }
         (Language::Rust, "function_item") => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 if let Ok(name) = name_node.utf8_text(source) {
@@ -137,7 +144,7 @@ fn walk_and_extract(
                     } else {
                         SymbolKind::Method
                     };
-                    record_symbol(node, source, rel_path, scope, kind, symbols);
+                    record_symbol(node, source, rel_path, scope, kind, symbols, lang);
                 }
             }
         }
@@ -152,16 +159,29 @@ fn walk_and_extract(
                         "enum_item" => SymbolKind::Enum,
                         _ => SymbolKind::Trait,
                     };
-                    record_symbol(node, source, rel_path, scope.clone(), kind, symbols);
+                    record_symbol(node, source, rel_path, scope.clone(), kind, symbols, lang);
                     entered_scope = Some(name.to_string());
                 }
             }
         }
         (Language::Rust, "impl_item") => {
-            // e.g. impl ConnectionPool or impl Trait for ConnectionPool
             if let Some(type_node) = node.child_by_field_name("type") {
-                if let Ok(type_name) = type_node.utf8_text(source) {
-                    entered_scope = Some(type_name.to_string());
+                if let Ok(raw_type) = type_node.utf8_text(source) {
+                    let base_type = raw_type.split('<').next().unwrap_or(raw_type).trim();
+                    let scope_label = if let Some(trait_node) = node.child_by_field_name("trait") {
+                        let raw_trait = trait_node.utf8_text(source).unwrap_or("").trim();
+                        let base_trait = raw_trait.split('<').next().unwrap_or(raw_trait).trim();
+                        if !base_trait.is_empty() {
+                            format!("{}<as {}>", base_type, base_trait)
+                        } else {
+                            base_type.to_string()
+                        }
+                    } else {
+                        base_type.to_string()
+                    };
+                    if !scope_label.is_empty() {
+                        entered_scope = Some(scope_label);
+                    }
                 }
             }
         }
@@ -171,7 +191,15 @@ fn walk_and_extract(
             if let Some(name_node) = node.child_by_field_name("name") {
                 if let Ok(name) = name_node.utf8_text(source) {
                     let scope = build_scope(scope_stack, name, sep);
-                    record_symbol(node, source, rel_path, scope, SymbolKind::Function, symbols);
+                    record_symbol(
+                        node,
+                        source,
+                        rel_path,
+                        scope,
+                        SymbolKind::Function,
+                        symbols,
+                        lang,
+                    );
                 }
             }
         }
@@ -179,7 +207,15 @@ fn walk_and_extract(
             if let Some(name_node) = node.child_by_field_name("name") {
                 if let Ok(name) = name_node.utf8_text(source) {
                     let scope = build_scope(scope_stack, name, sep);
-                    record_symbol(node, source, rel_path, scope, SymbolKind::Method, symbols);
+                    record_symbol(
+                        node,
+                        source,
+                        rel_path,
+                        scope,
+                        SymbolKind::Method,
+                        symbols,
+                        lang,
+                    );
                 }
             }
         }
@@ -194,6 +230,7 @@ fn walk_and_extract(
                         scope.clone(),
                         SymbolKind::Class,
                         symbols,
+                        lang,
                     );
                     entered_scope = Some(name.to_string());
                 }
@@ -210,6 +247,7 @@ fn walk_and_extract(
                         scope.clone(),
                         SymbolKind::Interface,
                         symbols,
+                        lang,
                     );
                     entered_scope = Some(name.to_string());
                 }
@@ -224,7 +262,15 @@ fn walk_and_extract(
                 if value_node.kind() == "arrow_function" || value_node.kind() == "function" {
                     if let Ok(name) = name_node.utf8_text(source) {
                         let scope = build_scope(scope_stack, name, sep);
-                        record_symbol(node, source, rel_path, scope, SymbolKind::Function, symbols);
+                        record_symbol(
+                            node,
+                            source,
+                            rel_path,
+                            scope,
+                            SymbolKind::Function,
+                            symbols,
+                            lang,
+                        );
                     }
                 }
             }
@@ -240,7 +286,7 @@ fn walk_and_extract(
                     } else {
                         SymbolKind::Method
                     };
-                    record_symbol(node, source, rel_path, scope, kind, symbols);
+                    record_symbol(node, source, rel_path, scope, kind, symbols, lang);
                 }
             }
         }
@@ -255,6 +301,7 @@ fn walk_and_extract(
                         scope.clone(),
                         SymbolKind::Class,
                         symbols,
+                        lang,
                     );
                     entered_scope = Some(name.to_string());
                 }
@@ -266,7 +313,15 @@ fn walk_and_extract(
             if let Some(name_node) = node.child_by_field_name("name") {
                 if let Ok(name) = name_node.utf8_text(source) {
                     let scope = build_scope(scope_stack, name, sep);
-                    record_symbol(node, source, rel_path, scope, SymbolKind::Function, symbols);
+                    record_symbol(
+                        node,
+                        source,
+                        rel_path,
+                        scope,
+                        SymbolKind::Function,
+                        symbols,
+                        lang,
+                    );
                 }
             }
         }
@@ -279,25 +334,39 @@ fn walk_and_extract(
                     } else {
                         build_scope(scope_stack, name, sep)
                     };
-                    record_symbol(node, source, rel_path, scope, SymbolKind::Method, symbols);
+                    record_symbol(
+                        node,
+                        source,
+                        rel_path,
+                        scope,
+                        SymbolKind::Method,
+                        symbols,
+                        lang,
+                    );
                 }
             }
         }
         (Language::Go, "type_declaration") => {
-            // type Pool struct ...
-            if let Some(spec) = node.named_child(0) {
-                if spec.kind() == "type_spec" {
-                    if let Some(name_node) = spec.child_by_field_name("name") {
-                        if let Ok(name) = name_node.utf8_text(source) {
-                            let scope = build_scope(scope_stack, name, sep);
-                            record_symbol(
-                                node,
-                                source,
-                                rel_path,
-                                scope,
-                                SymbolKind::Struct,
-                                symbols,
-                            );
+            for i in 0..node.named_child_count() {
+                if let Some(spec) = node.named_child(i) {
+                    if spec.kind() == "type_spec" || spec.kind() == "type_alias" {
+                        if let Some(name_node) = spec.child_by_field_name("name") {
+                            if let Ok(name) = name_node.utf8_text(source) {
+                                let scope = build_scope(scope_stack, name, sep);
+                                let sym_kind =
+                                    if let Some(type_node) = spec.child_by_field_name("type") {
+                                        match type_node.kind() {
+                                            "interface_type" => SymbolKind::Interface,
+                                            "struct_type" => SymbolKind::Struct,
+                                            _ => SymbolKind::Type,
+                                        }
+                                    } else {
+                                        SymbolKind::Type
+                                    };
+                                record_symbol(
+                                    &spec, source, rel_path, scope, sym_kind, symbols, lang,
+                                );
+                            }
                         }
                     }
                 }
@@ -347,13 +416,21 @@ fn record_symbol(
     scope_chain: String,
     kind: SymbolKind,
     symbols: &mut Vec<Symbol>,
+    lang: Language,
 ) {
-    let ast_hash = compute_ast_hash(node, source);
+    let ast_hash = compute_ast_hash_for_lang(node, source, lang);
     let start_pos = node.start_position();
     let end_pos = node.end_position();
 
     // Disambiguate duplicate/overloaded symbol scopes with ordinal suffix
     let final_scope = disambiguate_scope(symbols, &scope_chain);
+
+    let end_row = if end_pos.column == 0 && end_pos.row > start_pos.row {
+        end_pos.row as u32 + 1
+    } else {
+        end_pos.row as u32 + 2
+    };
+    let line_range = (start_pos.row as u32 + 1)..end_row;
 
     symbols.push(Symbol {
         uri: format_symbol_uri(rel_path, &final_scope),
@@ -361,7 +438,7 @@ fn record_symbol(
         kind,
         ast_hash,
         byte_range: node.byte_range(),
-        line_range: (start_pos.row as u32 + 1)..(end_pos.row as u32 + 2),
+        line_range,
     });
 }
 
