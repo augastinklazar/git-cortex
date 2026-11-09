@@ -6,6 +6,7 @@ pub struct CortexSnapshot;
 
 impl CortexSnapshot {
     /// Create a working-tree snapshot commit stored under `refs/cortex/<category>/<id>`
+    /// Uses an isolated temporary index to prevent mutating the repository's live `.git/index`.
     pub fn create_snapshot(
         repo: &Repository,
         category: &str, // "checkpoints" or "backups"
@@ -16,20 +17,39 @@ impl CortexSnapshot {
     ) -> Result<(Oid, String)> {
         let ref_name = format!("refs/cortex/{}/{}", category, id);
 
-        // We create a temporary index from worktree to include tracked + untracked files
-        let mut index = repo
+        // Save reference to current live index
+        let mut live_index = repo
             .index()
             .map_err(|e| CortexError::Git(format!("Failed to open repo index: {}", e)))?;
 
-        // Add all modified tracked and untracked files respecting .gitignore
-        index
-            .add_all(["*"].iter(), IndexAddOption::DEFAULT, None)
-            .map_err(|e| {
-                CortexError::Git(format!("Failed to add files to snapshot index: {}", e))
-            })?;
+        // Create an isolated temporary index file inside .git/cortex/
+        let cortex_dir = repo.path().join("cortex");
+        std::fs::create_dir_all(&cortex_dir).map_err(CortexError::Io)?;
+        let temp_index_path = cortex_dir.join(format!("tmp_index_{}", id));
+        let mut temp_index =
+            git2::Index::open(&temp_index_path).map_err(|e| CortexError::Git(e.to_string()))?;
 
-        let tree_oid = index
-            .write_tree()
+        // Associate temp_index with repo so update_all and add_all have workdir context
+        repo.set_index(&mut temp_index)
+            .map_err(|e| CortexError::Git(e.to_string()))?;
+
+        // Seed temporary index from HEAD tree if HEAD exists
+        if let Ok(head_tree) = repo.head().and_then(|h| h.peel_to_tree()) {
+            let _ = temp_index.read_tree(&head_tree);
+        }
+
+        // Reflect working-tree deletions and modifications/additions in temp index
+        let update_res = temp_index.update_all(["*"].iter(), None);
+        let add_res = temp_index.add_all(["*"].iter(), IndexAddOption::DEFAULT, None);
+        let tree_oid_res = temp_index.write_tree_to(repo);
+
+        // Always restore the live repository index before returning
+        let _ = repo.set_index(&mut live_index);
+        let _ = std::fs::remove_file(&temp_index_path);
+
+        update_res.map_err(|e| CortexError::Git(format!("Failed to update temp index: {}", e)))?;
+        add_res.map_err(|e| CortexError::Git(format!("Failed to add to temp index: {}", e)))?;
+        let tree_oid = tree_oid_res
             .map_err(|e| CortexError::Git(format!("Failed to write snapshot tree: {}", e)))?;
 
         let tree = repo
