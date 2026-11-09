@@ -108,9 +108,54 @@ pub struct CallGraphEdge {
 pub struct ActiveHypothesis {
     pub hypothesis_id: String,
     pub statement: String,
+    #[serde(deserialize_with = "deserialize_confidence")]
     pub confidence: f64,
     pub status: String,
     pub next_verification_step: String,
+}
+
+fn deserialize_confidence<'de, D>(deserializer: D) -> std::result::Result<f64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let val = f64::deserialize(deserializer)?;
+    if !val.is_finite() || !(0.0..=1.0).contains(&val) {
+        return Err(serde::de::Error::custom(format!(
+            "Confidence {} must be a finite float between 0.0 and 1.0",
+            val
+        )));
+    }
+    Ok(val)
+}
+
+impl ActiveHypothesis {
+    pub fn new(
+        hypothesis_id: String,
+        statement: String,
+        confidence: f64,
+        status: String,
+        next_verification_step: String,
+    ) -> crate::error::Result<Self> {
+        let hyp = Self {
+            hypothesis_id,
+            statement,
+            confidence,
+            status,
+            next_verification_step,
+        };
+        hyp.validate()?;
+        Ok(hyp)
+    }
+
+    pub fn validate(&self) -> crate::error::Result<()> {
+        if !self.confidence.is_finite() || !(0.0..=1.0).contains(&self.confidence) {
+            return Err(crate::error::CortexError::Validation(format!(
+                "Confidence {} for hypothesis '{}' must be a finite float between 0.0 and 1.0",
+                self.confidence, self.hypothesis_id
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// EpistemicHandoff compresses working memory into a <= 4KB payload
@@ -278,5 +323,82 @@ impl DerivedStatus {
             Self::Orphaned { .. } => "ORPHANED",
             Self::Revoked { .. } => "REVOKED",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_active_hypothesis_validation() {
+        let valid = ActiveHypothesis::new(
+            "hyp_01".to_string(),
+            "Valid hypothesis".to_string(),
+            0.85,
+            "ACTIVE".to_string(),
+            "run tests".to_string(),
+        );
+        assert!(valid.is_ok());
+
+        let invalid_high = ActiveHypothesis::new(
+            "hyp_02".to_string(),
+            "Too high".to_string(),
+            1.5,
+            "ACTIVE".to_string(),
+            "step".to_string(),
+        );
+        assert!(invalid_high.is_err());
+
+        let invalid_neg = ActiveHypothesis::new(
+            "hyp_03".to_string(),
+            "Negative".to_string(),
+            -0.1,
+            "ACTIVE".to_string(),
+            "step".to_string(),
+        );
+        assert!(invalid_neg.is_err());
+
+        let invalid_nan = ActiveHypothesis::new(
+            "hyp_04".to_string(),
+            "NaN".to_string(),
+            f64::NAN,
+            "ACTIVE".to_string(),
+            "step".to_string(),
+        );
+        assert!(invalid_nan.is_err());
+    }
+
+    #[test]
+    fn test_active_hypothesis_deserialization_bounds() {
+        let valid_json = r#"{
+            "hypothesis_id": "hyp_01",
+            "statement": "Valid",
+            "confidence": 0.5,
+            "status": "ACTIVE",
+            "next_verification_step": "test"
+        }"#;
+        let hyp: Result<ActiveHypothesis, _> = serde_json::from_str(valid_json);
+        assert!(hyp.is_ok());
+
+        let invalid_json = r#"{
+            "hypothesis_id": "hyp_02",
+            "statement": "Invalid",
+            "confidence": 1.2,
+            "status": "ACTIVE",
+            "next_verification_step": "test"
+        }"#;
+        let res: Result<ActiveHypothesis, _> = serde_json::from_str(invalid_json);
+        assert!(res.is_err());
+
+        let nan_json = r#"{
+            "hypothesis_id": "hyp_03",
+            "statement": "NaN",
+            "confidence": "NaN",
+            "status": "ACTIVE",
+            "next_verification_step": "test"
+        }"#;
+        let res_nan: Result<ActiveHypothesis, _> = serde_json::from_str(nan_json);
+        assert!(res_nan.is_err());
     }
 }
