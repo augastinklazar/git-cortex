@@ -1,7 +1,15 @@
 use crate::error::{CortexError, Result};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
-use ulid::Ulid;
+use std::sync::{LazyLock, Mutex};
+use ulid::{Generator, Ulid};
+
+static GENERATOR: LazyLock<Mutex<Generator>> = LazyLock::new(|| Mutex::new(Generator::new()));
+
+fn is_valid_crockford_base32_char(c: char) -> bool {
+    matches!(c, '0'..='9' | 'A'..='H' | 'J'..='K' | 'M'..='N' | 'P'..='T' | 'V'..='Z')
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IdPrefix {
@@ -32,15 +40,17 @@ impl fmt::Display for IdPrefix {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[serde(transparent)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PrefixedId {
     raw: String,
 }
 
 impl PrefixedId {
     pub fn new(prefix: IdPrefix) -> Self {
-        let ulid = Ulid::new();
+        let ulid = GENERATOR
+            .lock()
+            .map(|mut gen| gen.generate().unwrap_or_else(|_| Ulid::new()))
+            .unwrap_or_else(|_| Ulid::new());
         Self {
             raw: format!("{}{}", prefix.as_str(), ulid),
         }
@@ -52,6 +62,9 @@ impl PrefixedId {
             return Err(CortexError::InvalidId(s.to_string(), p));
         }
         let ulid_part = &s[p.len()..];
+        if ulid_part.len() != 26 || !ulid_part.chars().all(is_valid_crockford_base32_char) {
+            return Err(CortexError::InvalidId(s.to_string(), p));
+        }
         Ulid::from_string(ulid_part).map_err(|_| CortexError::InvalidId(s.to_string(), p))?;
         Ok(Self { raw: s.to_string() })
     }
@@ -89,7 +102,6 @@ impl FromStr for PrefixedId {
     type Err = CortexError;
 
     fn from_str(s: &str) -> Result<Self> {
-        // Must match one of known prefixes
         for prefix in [
             IdPrefix::Tombstone,
             IdPrefix::Handoff,
@@ -98,14 +110,33 @@ impl FromStr for PrefixedId {
             IdPrefix::Candidate,
             IdPrefix::Event,
         ] {
-            if let Ok(id) = Self::parse(s, prefix) {
-                return Ok(id);
+            if s.starts_with(prefix.as_str()) {
+                return Self::parse(s, prefix);
             }
         }
         Err(CortexError::InvalidId(
             s.to_string(),
             "known prefix (tmb_, hnd_, inv_, chk_, cand_, evt_)",
         ))
+    }
+}
+
+impl Serialize for PrefixedId {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.raw)
+    }
+}
+
+impl<'de> Deserialize<'de> for PrefixedId {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse::<PrefixedId>().map_err(serde::de::Error::custom)
     }
 }
 
@@ -124,5 +155,67 @@ mod tests {
 
         let err = PrefixedId::parse(tmb_id.as_str(), IdPrefix::Invariant);
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_monotonic_generation() {
+        let mut ids = Vec::with_capacity(100);
+        for _ in 0..100 {
+            ids.push(PrefixedId::new(IdPrefix::Candidate));
+        }
+        for window in ids.windows(2) {
+            assert!(
+                window[0].as_str() < window[1].as_str(),
+                "IDs must be strictly monotonic: {} vs {}",
+                window[0],
+                window[1]
+            );
+        }
+    }
+
+    #[test]
+    fn test_crockford_base32_case_strict_rejection() {
+        let valid = PrefixedId::new(IdPrefix::Tombstone);
+        let raw = valid.as_str();
+
+        // Lowercase variant must be rejected
+        let lowercase = raw.to_lowercase();
+        assert!(PrefixedId::parse(&lowercase, IdPrefix::Tombstone).is_err());
+        assert!(lowercase.parse::<PrefixedId>().is_err());
+
+        // Non-Crockford characters ('I', 'L', 'O', 'U') must be rejected
+        let mut chars: Vec<char> = raw.chars().collect();
+        chars[10] = 'I';
+        let with_i: String = chars.iter().collect();
+        assert!(PrefixedId::parse(&with_i, IdPrefix::Tombstone).is_err());
+
+        chars[10] = 'O';
+        let with_o: String = chars.iter().collect();
+        assert!(PrefixedId::parse(&with_o, IdPrefix::Tombstone).is_err());
+
+        chars[10] = 'U';
+        let with_u: String = chars.iter().collect();
+        assert!(PrefixedId::parse(&with_u, IdPrefix::Tombstone).is_err());
+
+        chars[10] = 'L';
+        let with_l: String = chars.iter().collect();
+        assert!(PrefixedId::parse(&with_l, IdPrefix::Tombstone).is_err());
+
+        // Invalid length must be rejected
+        let truncated = &raw[..raw.len() - 1];
+        assert!(PrefixedId::parse(truncated, IdPrefix::Tombstone).is_err());
+    }
+
+    #[test]
+    fn test_serde_json_roundtrip_and_strictness() {
+        let id = PrefixedId::new(IdPrefix::Invariant);
+        let serialized = serde_json::to_string(&id).unwrap();
+        let deserialized: PrefixedId = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(id, deserialized);
+
+        // Lowercase in JSON must fail deserialization
+        let lowercase_json = format!("\"{}\"", id.as_str().to_lowercase());
+        let res: std::result::Result<PrefixedId, _> = serde_json::from_str(&lowercase_json);
+        assert!(res.is_err());
     }
 }

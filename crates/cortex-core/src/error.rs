@@ -15,6 +15,9 @@ pub enum CortexError {
     #[error("Schema error: {0}")]
     Schema(String),
 
+    #[error("Validation error: {0}")]
+    Validation(String),
+
     #[error("Redaction error: {0}")]
     Redaction(String),
 
