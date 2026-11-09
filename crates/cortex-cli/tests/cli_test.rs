@@ -44,54 +44,12 @@ fn test_cli_init_and_doctor() {
 }
 
 fn cortex_cli_init(repo: &CortexRepo) -> Vec<String> {
-    // Invoke logic directly from cortex-cli init module
-    let opts = init_opts();
-    init_run(repo, &opts).unwrap()
-}
-
-// Stubs to test internal logic
-fn init_opts() -> (bool, bool, bool) {
-    (true, true, true)
-}
-
-fn init_run(
-    repo: &CortexRepo,
-    opts: &(bool, bool, bool),
-) -> cortex_core::error::Result<Vec<String>> {
-    let mut actions = Vec::new();
-    let db_path = repo.state_db_path();
-    let _ = cortex_storage::CortexDb::open(&db_path)?;
-    actions.push("db".to_string());
-
-    if opts.0 {
-        let hooks_dir = repo.git_dir.join("hooks");
-        fs::create_dir_all(&hooks_dir).unwrap();
-        fs::write(
-            hooks_dir.join("pre-commit"),
-            "#!/bin/sh\ngit cortex hook pre-commit\n",
-        )
-        .unwrap();
-        fs::write(
-            hooks_dir.join("post-commit"),
-            "#!/bin/sh\ngit cortex hook post-commit\n",
-        )
-        .unwrap();
-        actions.push("hooks".to_string());
-    }
-
-    if opts.1 {
-        let block = "<!-- git-cortex:begin -->\n## Epistemic Memory & Invariant Protocol (git-cortex)\n- **Session Start:** Call `cortex_handoff_pack(mode=\"IMPORT\")`\n<!-- git-cortex:end -->\n";
-        fs::write(repo.workdir.join("AGENTS.md"), block).unwrap();
-        fs::write(repo.workdir.join("CLAUDE.md"), block).unwrap();
-        actions.push("docs".to_string());
-    }
-
-    if opts.2 {
-        fs::write(repo.workdir.join(".mcp.json"), "{}").unwrap();
-        actions.push("mcp".to_string());
-    }
-
-    Ok(actions)
+    let opts = cortex_cli::init::InitOptions {
+        install_hooks: true,
+        setup_agents_md: true,
+        setup_mcp_config: true,
+    };
+    cortex_cli::init::run_init(repo, &opts).unwrap()
 }
 
 #[test]

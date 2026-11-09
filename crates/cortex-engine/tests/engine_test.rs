@@ -342,3 +342,173 @@ fn test_symbol_cache_memoization_across_inspections() {
     assert!(verify_rep.passed);
     assert_eq!(repo.symbol_cache.len(), 1);
 }
+
+#[test]
+fn test_adaptive_handoff_compactor_tier_shedding() {
+    let (_temp, repo, mut db) = setup_repo();
+    let branch = repo.current_branch().unwrap();
+
+    // 1. Record an active tombstone and a revoked tombstone
+    let t1 = record_tombstone(
+        &repo,
+        &mut db,
+        RecordTombstoneParams {
+            target_symbols: &["src/calc.rs#Calc::add".to_string()],
+            attempted_approach: "Approach 1",
+            failure_reason: "Reason 1",
+            test_command: "cargo test",
+            error_signature: "sig 1",
+            author_harness: "agent",
+            capture_mode: CaptureMode::Manual,
+        },
+    )
+    .unwrap();
+
+    let t2 = record_tombstone(
+        &repo,
+        &mut db,
+        RecordTombstoneParams {
+            target_symbols: &["src/calc.rs#Calc::add".to_string()],
+            attempted_approach: "Approach 2 (to revoke)",
+            failure_reason: "Reason 2",
+            test_command: "cargo test",
+            error_signature: "sig 2",
+            author_harness: "agent",
+            capture_mode: CaptureMode::Manual,
+        },
+    )
+    .unwrap();
+
+    revoke_record(&repo, &mut db, &t2.id, "Deprecated", "lead").unwrap();
+
+    // 2. Add multiple hypotheses across confidence tiers
+    let hyp_low = ActiveHypothesis {
+        hypothesis_id: "hyp_low".to_string(),
+        statement: "Low confidence speculation".to_string(),
+        confidence: 0.2,
+        status: "ACTIVE".to_string(),
+        next_verification_step: "run test".to_string(),
+    };
+    let hyp_med = ActiveHypothesis {
+        hypothesis_id: "hyp_med".to_string(),
+        statement: "Medium confidence insight".to_string(),
+        confidence: 0.65,
+        status: "ACTIVE".to_string(),
+        next_verification_step: "run test".to_string(),
+    };
+    let hyp_high = ActiveHypothesis {
+        hypothesis_id: "hyp_high".to_string(),
+        statement: "High confidence ground truth".to_string(),
+        confidence: 0.98,
+        status: "ACTIVE".to_string(),
+        next_verification_step: "run test".to_string(),
+    };
+
+    db.save_hypothesis(&hyp_low, &branch).unwrap();
+    db.save_hypothesis(&hyp_med, &branch).unwrap();
+    db.save_hypothesis(&hyp_high, &branch).unwrap();
+
+    // 3. Add numerous call graph edges and heavy objective to trigger compaction
+    for i in 0..100 {
+        let edge = CallGraphEdge {
+            caller: format!("src/calc.rs#caller_{}", i),
+            callee: format!("src/calc.rs#callee_{}", i),
+            relationship: "CALLS".to_string(),
+            verified_ast_hash: "ast:sha256:0123456789abcdef".to_string(),
+        };
+        db.save_call_graph_edge(&edge, &branch).unwrap();
+    }
+
+    let long_objective = "A".repeat(2000);
+    let envelope =
+        create_handoff_envelope(&repo, &db, Some(&branch), Some(&long_objective)).unwrap();
+
+    let json = serde_json::to_string(&envelope).unwrap();
+    assert!(json.len() <= MAX_HANDOFF_BYTES);
+
+    // Assert revoked tombstone t2 is excluded while t1 remains
+    assert!(envelope.active_tombstone_ids.contains(&t1.id));
+    assert!(!envelope.active_tombstone_ids.contains(&t2.id));
+
+    // Assert high confidence hypothesis is preserved
+    assert!(envelope
+        .active_hypotheses
+        .iter()
+        .any(|h| h.hypothesis_id == "hyp_high"));
+}
+
+#[test]
+fn test_distributed_ledger_divergence_union_merge() {
+    let (_temp, repo, mut db) = setup_repo();
+
+    // Record record A
+    let _t1 = record_tombstone(
+        &repo,
+        &mut db,
+        RecordTombstoneParams {
+            target_symbols: &["src/calc.rs#Calc::add".to_string()],
+            attempted_approach: "Branch A approach",
+            failure_reason: "Branch A failure",
+            test_command: "cargo test",
+            error_signature: "error A",
+            author_harness: "agent-a",
+            capture_mode: CaptureMode::Manual,
+        },
+    )
+    .unwrap();
+
+    promote_local_records(&repo, &mut db).unwrap();
+
+    let commit_a = cortex_storage::CortexLedger::current_commit(&repo.repo)
+        .unwrap()
+        .unwrap();
+
+    // Now simulate remote ledger commit on a separate branch with record B
+    // Create new branch pointer for ledger
+    let sig = git2::Signature::now("Agent B", "agent-b@example.com").unwrap();
+    let tree_b_builder = repo.repo.treebuilder(None).unwrap();
+    let blob_b = repo
+        .repo
+        .blob(br#"{"id":"tmb_01HZXREMOTE","kind":"TOMBSTONE"}"#)
+        .unwrap();
+    let mut builder = tree_b_builder;
+    cortex_storage::CortexLedger::insert_entry_at_path(
+        &repo.repo,
+        &mut builder,
+        "v1/tombstones/TE/tmb_01HZXREMOTE.json",
+        blob_b,
+    )
+    .unwrap();
+    let tree_b_oid = builder.write().unwrap();
+    let tree_b = repo.repo.find_tree(tree_b_oid).unwrap();
+    let commit_b_oid = repo
+        .repo
+        .commit(
+            None,
+            &sig,
+            &sig,
+            "cortex: remote ledger commit",
+            &tree_b,
+            &[],
+        )
+        .unwrap();
+
+    // Merge remote commit B into local commit A
+    let merge_oid = cortex_storage::CortexLedger::merge_commits(
+        &repo.repo,
+        commit_b_oid,
+        "git-cortex",
+        "cortex@git-cortex.dev",
+    )
+    .unwrap();
+
+    assert!(merge_oid.is_some());
+    let merge_commit = repo.repo.find_commit(merge_oid.unwrap()).unwrap();
+    assert_eq!(merge_commit.parent_count(), 2);
+    assert_eq!(merge_commit.parent_id(0).unwrap(), commit_a.id());
+    assert_eq!(merge_commit.parent_id(1).unwrap(), commit_b_oid);
+
+    // Reindex verifies union of both records into DB
+    let count = cortex_storage::CortexLedger::reindex_into_db(&repo.repo, &mut db).unwrap();
+    assert!(count >= 2);
+}

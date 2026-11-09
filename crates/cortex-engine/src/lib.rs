@@ -20,5 +20,5 @@ pub use invariant::{
 pub use lifecycle::{reaffirm_invariant, revoke_record};
 pub use promote::promote_local_records;
 pub use rewind::{rewind_to_checkpoint, RewindResult};
-pub use sync::sync_ledger;
+pub use sync::{sync_ledger, sync_ledger_rebase};
 pub use tombstone::{record_tombstone, RecordTombstoneParams};

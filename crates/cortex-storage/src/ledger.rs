@@ -84,7 +84,7 @@ impl CortexLedger {
                 })?;
 
                 let path = record.tree_path();
-                insert_entry_at_path(repo, &mut builder, &path, blob_oid)?;
+                Self::insert_entry_at_path(repo, &mut builder, &path, blob_oid)?;
             }
 
             let tree_oid = builder
@@ -231,7 +231,7 @@ impl CortexLedger {
                     )));
                 }
             } else {
-                insert_entry_at_path(repo, &mut builder, &path, remote_oid)?;
+                Self::insert_entry_at_path(repo, &mut builder, &path, remote_oid)?;
             }
         }
 
@@ -264,19 +264,19 @@ impl CortexLedger {
 
         Ok(Some(merge_commit_oid))
     }
-}
 
-fn insert_entry_at_path(
-    repo: &Repository,
-    root_builder: &mut git2::TreeBuilder,
-    full_path: &str,
-    blob_oid: Oid,
-) -> Result<()> {
-    let segments: Vec<&str> = full_path.split('/').collect();
-    if segments.is_empty() {
-        return Ok(());
+    pub fn insert_entry_at_path(
+        repo: &Repository,
+        root_builder: &mut git2::TreeBuilder,
+        full_path: &str,
+        blob_oid: Oid,
+    ) -> Result<()> {
+        let segments: Vec<&str> = full_path.split('/').collect();
+        if segments.is_empty() {
+            return Ok(());
+        }
+        insert_recursive(repo, root_builder, &segments, blob_oid)
     }
-    insert_recursive(repo, root_builder, &segments, blob_oid)
 }
 
 fn insert_recursive(
