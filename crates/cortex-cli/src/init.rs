@@ -58,7 +58,17 @@ pub fn run_init(repo: &CortexRepo, opts: &InitOptions) -> Result<Vec<String>> {
 
     // 3. Install chained git hooks
     if opts.install_hooks {
-        let hooks_dir = repo.git_dir.join("hooks");
+        let hooks_dir = match git_config.get_string("core.hooksPath") {
+            Ok(custom) if !custom.trim().is_empty() => {
+                let p = Path::new(&custom);
+                if p.is_absolute() {
+                    p.to_path_buf()
+                } else {
+                    repo.workdir.join(p)
+                }
+            }
+            _ => repo.git_dir.join("hooks"),
+        };
         fs::create_dir_all(&hooks_dir).map_err(CortexError::Io)?;
 
         install_chained_hook(&hooks_dir, "pre-commit", "pre-commit")?;

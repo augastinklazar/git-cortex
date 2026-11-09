@@ -20,6 +20,7 @@ fn test_passive_capture_edit_fail_revert_cycle() {
     index
         .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
         .unwrap();
+    index.write().unwrap();
     let tree_id = index.write_tree().unwrap();
     let tree = repo.find_tree(tree_id).unwrap();
     repo.commit(Some("HEAD"), &sig, &sig, "Initial", &tree, &[])
@@ -39,7 +40,7 @@ fn test_passive_capture_edit_fail_revert_cycle() {
         "import sys; print('AssertionError: expected true but got false'); sys.exit(1)".to_string(),
     ];
 
-    let exit_code = execute_command(&cortex_repo, &mut db, &cmd).unwrap();
+    let exit_code = execute_command(&cortex_repo, &mut db, &cmd, None).unwrap();
     assert_eq!(exit_code, 1);
 
     // Verify candidate failure was recorded
@@ -62,4 +63,51 @@ fn test_passive_capture_edit_fail_revert_cycle() {
     // Candidate should now be marked PROMOTED
     let pending = db.get_candidates_by_state("FAILED").unwrap();
     assert!(pending.is_empty());
+}
+
+#[test]
+fn test_baseline_failure_does_not_create_false_tombstone() {
+    let temp = TempDir::new().unwrap();
+    let repo = Repository::init(temp.path()).unwrap();
+    let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+
+    let src_dir = temp.path().join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    let file = src_dir.join("worker.rs");
+    let original_code = "pub fn work() -> bool {\n  true\n}\n";
+    fs::write(&file, original_code).unwrap();
+
+    let mut index = repo.index().unwrap();
+    index
+        .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+        .unwrap();
+    index.write().unwrap();
+    let tree_id = index.write_tree().unwrap();
+    let tree = repo.find_tree(tree_id).unwrap();
+    repo.commit(Some("HEAD"), &sig, &sig, "Initial", &tree, &[])
+        .unwrap();
+
+    let cortex_repo = CortexRepo::discover(Some(temp.path())).unwrap();
+    let mut db = CortexDb::open_in_memory().unwrap();
+
+    let failing_cmd = vec![
+        "python".to_string(),
+        "-c".to_string(),
+        "import sys; print('BaselineFailure: suite broken'); sys.exit(1)".to_string(),
+    ];
+
+    // 1. Run failing command while working tree is clean (baseline failure)
+    let exit_code = execute_command(&cortex_repo, &mut db, &failing_cmd, None).unwrap();
+    assert_eq!(exit_code, 1);
+
+    // 2. Now modify code
+    fs::write(&file, "pub fn work() -> bool {\n  false\n}\n").unwrap();
+
+    // 3. Run failing command again with modified code
+    let exit_code = execute_command(&cortex_repo, &mut db, &failing_cmd, None).unwrap();
+    assert_eq!(exit_code, 1);
+
+    // 4. Verify that NO candidate was created because the failure was already happening at baseline!
+    let candidates = db.get_candidates_by_state("FAILED").unwrap();
+    assert_eq!(candidates.len(), 0);
 }

@@ -456,6 +456,39 @@ impl CortexDb {
         Ok(())
     }
 
+    pub fn get_execs_by_cmd_and_signature(
+        &self,
+        cmd: &str,
+        signature: &str,
+    ) -> Result<Vec<StoredExec>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, cmd, exit_code, signature, output_tail, tree_hash, started_at, duration_ms FROM execs WHERE cmd = ?1 AND signature = ?2",
+            )
+            .map_err(|e| CortexError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![cmd, signature], |row| {
+                Ok(StoredExec {
+                    id: row.get(0)?,
+                    cmd: row.get(1)?,
+                    exit_code: row.get(2)?,
+                    signature: row.get(3)?,
+                    output_tail: row.get(4)?,
+                    tree_hash: row.get(5)?,
+                    started_at: row.get(6)?,
+                    duration_ms: row.get(7)?,
+                })
+            })
+            .map_err(|e| CortexError::Database(e.to_string()))?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r.map_err(|e| CortexError::Database(e.to_string()))?);
+        }
+        Ok(list)
+    }
+
     pub fn save_candidate(&mut self, candidate: &StoredCandidate) -> Result<()> {
         self.conn
             .execute(
