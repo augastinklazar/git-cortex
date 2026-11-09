@@ -121,6 +121,117 @@ impl CortexLedger {
 
         Ok(indexed_count)
     }
+
+    /// Merge a remote ledger commit into local ledger using a conflict-free set-union of trees.
+    /// Returns the merge commit Oid, or None if already up-to-date.
+    pub fn merge_commits(
+        repo: &Repository,
+        remote_commit_oid: Oid,
+        author_name: &str,
+        author_email: &str,
+    ) -> Result<Option<Oid>> {
+        let local_commit = match Self::current_commit(repo)? {
+            Some(c) => c,
+            None => {
+                repo.reference(
+                    LEDGER_REF,
+                    remote_commit_oid,
+                    true,
+                    "cortex: fast-forward to remote ledger",
+                )
+                .map_err(|e| CortexError::Git(e.to_string()))?;
+                return Ok(Some(remote_commit_oid));
+            }
+        };
+
+        if local_commit.id() == remote_commit_oid {
+            return Ok(None);
+        }
+
+        if repo
+            .graph_descendant_of(local_commit.id(), remote_commit_oid)
+            .unwrap_or(false)
+        {
+            return Ok(None);
+        }
+
+        if repo
+            .graph_descendant_of(remote_commit_oid, local_commit.id())
+            .unwrap_or(false)
+        {
+            repo.reference(
+                LEDGER_REF,
+                remote_commit_oid,
+                true,
+                "cortex: fast-forward to remote ledger",
+            )
+            .map_err(|e| CortexError::Git(e.to_string()))?;
+            return Ok(Some(remote_commit_oid));
+        }
+
+        let remote_commit = repo
+            .find_commit(remote_commit_oid)
+            .map_err(|e| CortexError::Git(format!("Failed to find remote commit: {}", e)))?;
+
+        let local_tree = local_commit
+            .tree()
+            .map_err(|e| CortexError::Git(e.to_string()))?;
+        let remote_tree = remote_commit
+            .tree()
+            .map_err(|e| CortexError::Git(e.to_string()))?;
+
+        let mut local_map = std::collections::HashMap::new();
+        collect_tree_blobs(repo, &local_tree, "", &mut local_map)?;
+
+        let mut remote_map = std::collections::HashMap::new();
+        collect_tree_blobs(repo, &remote_tree, "", &mut remote_map)?;
+
+        let mut builder = repo
+            .treebuilder(Some(&local_tree))
+            .map_err(|e| CortexError::Git(e.to_string()))?;
+
+        for (path, remote_oid) in remote_map {
+            if let Some(&local_oid) = local_map.get(&path) {
+                if local_oid != remote_oid {
+                    return Err(CortexError::Other(format!(
+                        "Tamper alert: conflicting content detected for record path '{}' (local {} vs remote {})",
+                        path, local_oid, remote_oid
+                    )));
+                }
+            } else {
+                insert_entry_at_path(repo, &mut builder, &path, remote_oid)?;
+            }
+        }
+
+        let union_tree_oid = builder
+            .write()
+            .map_err(|e| CortexError::Git(e.to_string()))?;
+        let union_tree = repo
+            .find_tree(union_tree_oid)
+            .map_err(|e| CortexError::Git(e.to_string()))?;
+
+        let sig = Signature::now(author_name, author_email)
+            .map_err(|e| CortexError::Git(e.to_string()))?;
+
+        let merge_msg = format!(
+            "cortex: merge remote ledger {} into local {}",
+            remote_commit_oid,
+            local_commit.id()
+        );
+
+        let merge_commit_oid = repo
+            .commit(
+                Some(LEDGER_REF),
+                &sig,
+                &sig,
+                &merge_msg,
+                &union_tree,
+                &[&local_commit, &remote_commit],
+            )
+            .map_err(|e| CortexError::Git(format!("Failed to create merge commit: {}", e)))?;
+
+        Ok(Some(merge_commit_oid))
+    }
 }
 
 fn insert_entry_at_path(
@@ -133,39 +244,77 @@ fn insert_entry_at_path(
     if segments.is_empty() {
         return Ok(());
     }
+    insert_recursive(repo, root_builder, &segments, blob_oid)
+}
 
+fn insert_recursive(
+    repo: &Repository,
+    builder: &mut git2::TreeBuilder,
+    segments: &[&str],
+    blob_oid: Oid,
+) -> Result<()> {
+    if segments.is_empty() {
+        return Ok(());
+    }
     if segments.len() == 1 {
-        root_builder
+        builder
             .insert(segments[0], blob_oid, 0o100644)
             .map_err(|e| CortexError::Git(format!("Failed to insert blob into tree: {}", e)))?;
         return Ok(());
     }
 
-    let subtree_oid = build_nested_subtree(repo, &segments[1..], blob_oid)?;
-    root_builder
-        .insert(segments[0], subtree_oid, 0o040000)
-        .map_err(|e| CortexError::Git(format!("Failed to insert subtree: {}", e)))?;
+    let existing_tree = match builder.get(segments[0]) {
+        Ok(Some(entry)) if entry.kind() == Some(git2::ObjectType::Tree) => {
+            repo.find_tree(entry.id()).ok()
+        }
+        _ => None,
+    };
+
+    let mut sub_builder = match existing_tree {
+        Some(ref tree) => repo.treebuilder(Some(tree)),
+        None => repo.treebuilder(None),
+    }
+    .map_err(|e| CortexError::Git(format!("Failed to create sub treebuilder: {}", e)))?;
+
+    insert_recursive(repo, &mut sub_builder, &segments[1..], blob_oid)?;
+
+    let sub_oid = sub_builder
+        .write()
+        .map_err(|e| CortexError::Git(format!("Failed to write sub tree: {}", e)))?;
+
+    builder
+        .insert(segments[0], sub_oid, 0o040000)
+        .map_err(|e| CortexError::Git(format!("Failed to insert sub tree: {}", e)))?;
 
     Ok(())
 }
 
-fn build_nested_subtree(repo: &Repository, segments: &[&str], blob_oid: Oid) -> Result<Oid> {
-    if segments.len() == 1 {
-        let mut b = repo
-            .treebuilder(None)
-            .map_err(|e| CortexError::Git(e.to_string()))?;
-        b.insert(segments[0], blob_oid, 0o100644)
-            .map_err(|e| CortexError::Git(e.to_string()))?;
-        b.write().map_err(|e| CortexError::Git(e.to_string()))
-    } else {
-        let child_oid = build_nested_subtree(repo, &segments[1..], blob_oid)?;
-        let mut b = repo
-            .treebuilder(None)
-            .map_err(|e| CortexError::Git(e.to_string()))?;
-        b.insert(segments[0], child_oid, 0o040000)
-            .map_err(|e| CortexError::Git(e.to_string()))?;
-        b.write().map_err(|e| CortexError::Git(e.to_string()))
+fn collect_tree_blobs(
+    repo: &Repository,
+    tree: &Tree,
+    prefix: &str,
+    out: &mut std::collections::HashMap<String, Oid>,
+) -> Result<()> {
+    for entry in tree.iter() {
+        let name = entry
+            .name()
+            .ok_or_else(|| CortexError::Git("Invalid UTF-8 name".to_string()))?;
+        let path = if prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}/{}", prefix, name)
+        };
+
+        if entry.kind() == Some(git2::ObjectType::Tree) {
+            let sub = repo
+                .find_tree(entry.id())
+                .map_err(|e| CortexError::Git(e.to_string()))?;
+            collect_tree_blobs(repo, &sub, &path, out)?;
+        } else if entry.kind() == Some(git2::ObjectType::Blob) {
+            out.insert(path, entry.id());
+        }
     }
+    Ok(())
 }
 
 fn walk_tree_and_index(
@@ -257,4 +406,122 @@ fn walk_tree_and_index(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn create_test_repo() -> (TempDir, Repository) {
+        let temp = TempDir::new().unwrap();
+        let repo = Repository::init(temp.path()).unwrap();
+        (temp, repo)
+    }
+
+    #[test]
+    fn test_nested_tree_preservation() {
+        let (_temp, repo) = create_test_repo();
+
+        let rec1 = LedgerRecord {
+            id: "tmb_ab000000000000000000001".to_string(),
+            kind: "tombstones".to_string(),
+            json: r#"{"id":"tmb_1"}"#.to_string(),
+        };
+        let rec2 = LedgerRecord {
+            id: "tmb_cd000000000000000000002".to_string(),
+            kind: "tombstones".to_string(),
+            json: r#"{"id":"tmb_2"}"#.to_string(),
+        };
+        let rec3 = LedgerRecord {
+            id: "inv_ef000000000000000000003".to_string(),
+            kind: "invariants".to_string(),
+            json: r#"{"id":"inv_3"}"#.to_string(),
+        };
+
+        // Append 1
+        CortexLedger::append_records(&repo, &[rec1], "Test", "test@test.com").unwrap();
+        // Append 2 (different shard under tombstones)
+        CortexLedger::append_records(&repo, &[rec2], "Test", "test@test.com").unwrap();
+        // Append 3 (different kind: invariants)
+        CortexLedger::append_records(&repo, &[rec3], "Test", "test@test.com").unwrap();
+
+        let commit = CortexLedger::current_commit(&repo).unwrap().unwrap();
+        let tree = commit.tree().unwrap();
+
+        let mut blobs = std::collections::HashMap::new();
+        collect_tree_blobs(&repo, &tree, "", &mut blobs).unwrap();
+
+        assert_eq!(blobs.len(), 3);
+        assert!(blobs.contains_key("v1/tombstones/ab/tmb_ab000000000000000000001.json"));
+        assert!(blobs.contains_key("v1/tombstones/cd/tmb_cd000000000000000000002.json"));
+        assert!(blobs.contains_key("v1/invariants/ef/inv_ef000000000000000000003.json"));
+    }
+
+    #[test]
+    fn test_set_union_merge_and_tamper_detection() {
+        let (_temp, repo) = create_test_repo();
+
+        // Commit base
+        let base_rec = LedgerRecord {
+            id: "tmb_01000000000000000000001".to_string(),
+            kind: "tombstones".to_string(),
+            json: r#"{"id":"base"}"#.to_string(),
+        };
+        let base_oid =
+            CortexLedger::append_records(&repo, &[base_rec], "Test", "test@test.com").unwrap();
+
+        // Branch A
+        let rec_a = LedgerRecord {
+            id: "tmb_02000000000000000000002".to_string(),
+            kind: "tombstones".to_string(),
+            json: r#"{"id":"branch_a"}"#.to_string(),
+        };
+        let oid_a = CortexLedger::append_records(&repo, &[rec_a], "Test", "test@test.com").unwrap();
+
+        // Reset ledger ref back to base, then commit Branch B
+        repo.reference(LEDGER_REF, base_oid, true, "reset").unwrap();
+        let rec_b = LedgerRecord {
+            id: "tmb_03000000000000000000003".to_string(),
+            kind: "tombstones".to_string(),
+            json: r#"{"id":"branch_b"}"#.to_string(),
+        };
+        let oid_b = CortexLedger::append_records(&repo, &[rec_b], "Test", "test@test.com").unwrap();
+
+        // Merge branch A into branch B
+        let merge_oid = CortexLedger::merge_commits(&repo, oid_a, "Test", "test@test.com")
+            .unwrap()
+            .unwrap();
+
+        let merge_commit = repo.find_commit(merge_oid).unwrap();
+        assert_eq!(merge_commit.parent_count(), 2);
+        assert_eq!(merge_commit.parent_id(0).unwrap(), oid_b);
+        assert_eq!(merge_commit.parent_id(1).unwrap(), oid_a);
+
+        let tree = merge_commit.tree().unwrap();
+        let mut blobs = std::collections::HashMap::new();
+        collect_tree_blobs(&repo, &tree, "", &mut blobs).unwrap();
+
+        assert_eq!(blobs.len(), 3);
+        assert!(blobs.contains_key("v1/tombstones/01/tmb_01000000000000000000001.json"));
+        assert!(blobs.contains_key("v1/tombstones/02/tmb_02000000000000000000002.json"));
+        assert!(blobs.contains_key("v1/tombstones/03/tmb_03000000000000000000003.json"));
+
+        // Now test tamper detection: attempt to merge a commit with same ID but different content
+        let tamper_rec = LedgerRecord {
+            id: "tmb_01000000000000000000001".to_string(),
+            kind: "tombstones".to_string(),
+            json: r#"{"id":"tampered_content"}"#.to_string(),
+        };
+        repo.reference(LEDGER_REF, base_oid, true, "reset").unwrap();
+        let tamper_oid =
+            CortexLedger::append_records(&repo, &[tamper_rec], "Test", "test@test.com").unwrap();
+
+        // Reset to merge_oid and attempt to merge tamper_oid
+        repo.reference(LEDGER_REF, merge_oid, true, "reset")
+            .unwrap();
+        let err =
+            CortexLedger::merge_commits(&repo, tamper_oid, "Test", "test@test.com").unwrap_err();
+        assert!(err.to_string().contains("Tamper alert"));
+    }
 }
