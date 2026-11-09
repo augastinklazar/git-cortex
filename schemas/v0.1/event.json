@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://git-cortex.dev/schemas/v0.1/event.json",
+  "title": "LifecycleEvent",
+  "description": "Append-only lifecycle event recording reaffirmations, revocations, or superseding.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "event_id",
+    "target_id",
+    "event_type",
+    "reason",
+    "created_at",
+    "author"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "event_id": { "type": "string", "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "target_id": { "type": "string" },
+    "event_type": {
+      "type": "string",
+      "enum": ["REVOKE", "REAFFIRM", "SUPERSEDE"]
+    },
+    "reason": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "author": { "type": "string" }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,36 @@
+{
+  "name": "git-cortex",
+  "version": "0.1.0",
+  "description": "Git-native Epistemic Memory Engine & Protocol for AI Coding Agents",
+  "bin": {
+    "git-cortex": "bin/git-cortex.js",
+    "cortex": "bin/git-cortex.js"
+  },
+  "scripts": {
+    "test": "node bin/git-cortex.js --version"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/augastinklazar/git-cortex.git"
+  },
+  "keywords": [
+    "git",
+    "mcp",
+    "ai-agents",
+    "epistemic-memory",
+    "tombstones",
+    "tree-sitter",
+    "sqlite",
+    "claude-code",
+    "cursor"
+  ],
+  "author": "Augastin Lazar",
+  "license": "MIT OR Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/augastinklazar/git-cortex/issues"
+  },
+  "homepage": "https://github.com/augastinklazar/git-cortex#readme",
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

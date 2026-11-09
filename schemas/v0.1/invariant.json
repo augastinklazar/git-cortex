@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://git-cortex.dev/schemas/v0.1/invariant.json",
+  "title": "InvariantContract",
+  "description": "Causal Invariant Lock protecting architectural invariants against upstream drift.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "invariant_id",
+    "schema_version",
+    "commit_sha",
+    "guarded_symbol",
+    "severity",
+    "assertion",
+    "upstream_dependencies",
+    "verification_test_cmd"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "invariant_id": { "type": "string", "pattern": "^inv_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "schema_version": { "type": "string" },
+    "commit_sha": { "type": "string" },
+    "guarded_symbol": {
+      "type": "object",
+      "required": ["symbol_uri", "ast_hash"],
+      "properties": {
+        "symbol_uri": { "type": "string" },
+        "ast_hash": { "type": "string", "pattern": "^ast:sha256:[0-9a-f]{16}$" }
+      }
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["BLOCKING", "WARNING"]
+    },
+    "assertion": { "type": "string" },
+    "upstream_dependencies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["symbol_uri", "expected_ast_hash"],
+        "properties": {
+          "symbol_uri": { "type": "string" },
+          "expected_ast_hash": { "type": "string", "pattern": "^ast:sha256:[0-9a-f]{16}$" }
+        }
+      }
+    },
+    "verification_test_cmd": { "type": "string" }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://git-cortex.dev/schemas/v0.1/handoff.json",
+  "title": "EpistemicHandoff",
+  "description": "Cross-harness and sub-agent handoff envelope with maximum 4 KB budget.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "handoff_id",
+    "schema_version",
+    "head_commit_sha",
+    "working_tree_dirty_hash",
+    "objective",
+    "verified_call_graph",
+    "active_hypotheses",
+    "active_tombstone_ids",
+    "do_not_re_read_unchanged"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "handoff_id": { "type": "string", "pattern": "^hnd_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "schema_version": { "type": "string" },
+    "head_commit_sha": { "type": "string" },
+    "working_tree_dirty_hash": { "type": "string" },
+    "objective": { "type": "string" },
+    "verified_call_graph": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["caller", "callee", "relationship", "verified_ast_hash"],
+        "properties": {
+          "caller": { "type": "string" },
+          "callee": { "type": "string" },
+          "relationship": { "type": "string" },
+          "verified_ast_hash": { "type": "string" }
+        }
+      }
+    },
+    "active_hypotheses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["hypothesis_id", "statement", "confidence", "status", "next_verification_step"],
+        "properties": {
+          "hypothesis_id": { "type": "string" },
+          "statement": { "type": "string" },
+          "confidence": { "type": "number" },
+          "status": { "type": "string" },
+          "next_verification_step": { "type": "string" }
+        }
+      }
+    },
+    "active_tombstone_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "do_not_re_read_unchanged": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": true
+}
