@@ -14,10 +14,9 @@ pub struct LedgerRecord {
 
 impl LedgerRecord {
     pub fn shard(&self) -> String {
-        // Shard by first 2 chars of the id after prefix
-        let parts: Vec<&str> = self.id.splitn(2, '_').collect();
-        if parts.len() == 2 && parts[1].len() >= 2 {
-            parts[1][..2].to_ascii_lowercase()
+        // Shard on the trailing 2 characters of the ID to distribute uniformly across 1,024 shards
+        if self.id.len() >= 2 {
+            self.id[self.id.len() - 2..].to_ascii_lowercase()
         } else {
             "00".to_string()
         }
@@ -51,7 +50,7 @@ impl CortexLedger {
         }
     }
 
-    /// Append records to refs/cortex/ledger
+    /// Append records to refs/cortex/ledger with CAS conflict retry
     pub fn append_records(
         repo: &Repository,
         records: &[LedgerRecord],
@@ -62,47 +61,75 @@ impl CortexLedger {
             return Err(CortexError::Other("No records to append".to_string()));
         }
 
-        let parent_commit = Self::current_commit(repo)?;
-        let mut builder = match &parent_commit {
-            Some(parent) => {
-                let tree = parent
-                    .tree()
-                    .map_err(|e| CortexError::Git(format!("Failed to get parent tree: {}", e)))?;
-                repo.treebuilder(Some(&tree))
-            }
-            None => repo.treebuilder(None),
-        }
-        .map_err(|e| CortexError::Git(format!("Failed to create treebuilder: {}", e)))?;
+        const MAX_RETRIES: usize = 5;
+        let mut last_err = None;
 
-        // Helper to insert nested paths into git tree
-        for record in records {
-            let blob_oid = repo.blob(record.json.as_bytes()).map_err(|e| {
-                CortexError::Git(format!("Failed to create blob for {}: {}", record.id, e))
+        for attempt in 0..MAX_RETRIES {
+            let parent_commit = Self::current_commit(repo)?;
+            let mut builder = match &parent_commit {
+                Some(parent) => {
+                    let tree = parent.tree().map_err(|e| {
+                        CortexError::Git(format!("Failed to get parent tree: {}", e))
+                    })?;
+                    repo.treebuilder(Some(&tree))
+                }
+                None => repo.treebuilder(None),
+            }
+            .map_err(|e| CortexError::Git(format!("Failed to create treebuilder: {}", e)))?;
+
+            // Helper to insert nested paths into git tree
+            for record in records {
+                let blob_oid = repo.blob(record.json.as_bytes()).map_err(|e| {
+                    CortexError::Git(format!("Failed to create blob for {}: {}", record.id, e))
+                })?;
+
+                let path = record.tree_path();
+                insert_entry_at_path(repo, &mut builder, &path, blob_oid)?;
+            }
+
+            let tree_oid = builder
+                .write()
+                .map_err(|e| CortexError::Git(format!("Failed to write tree: {}", e)))?;
+            let tree = repo.find_tree(tree_oid).map_err(|e| {
+                CortexError::Git(format!("Failed to find tree {}: {}", tree_oid, e))
             })?;
 
-            let path = record.tree_path();
-            insert_entry_at_path(repo, &mut builder, &path, blob_oid)?;
+            let sig = Signature::now(author_name, author_email)
+                .map_err(|e| CortexError::Git(format!("Failed to create signature: {}", e)))?;
+
+            let message = format!("cortex: append {} records to ledger", records.len());
+
+            let commit_res = match &parent_commit {
+                Some(parent) => {
+                    repo.commit(Some(LEDGER_REF), &sig, &sig, &message, &tree, &[parent])
+                }
+                None => repo.commit(Some(LEDGER_REF), &sig, &sig, &message, &tree, &[]),
+            };
+
+            match commit_res {
+                Ok(commit_oid) => return Ok(commit_oid),
+                Err(e) => {
+                    let is_conflict = e.code() == git2::ErrorCode::Modified
+                        || e.message().contains("changed while committing");
+                    if is_conflict && attempt + 1 < MAX_RETRIES {
+                        std::thread::sleep(std::time::Duration::from_millis(
+                            10 * (attempt as u64 + 1),
+                        ));
+                        last_err = Some(e);
+                        continue;
+                    }
+                    return Err(CortexError::Git(format!(
+                        "Failed to create ledger commit: {}",
+                        e
+                    )));
+                }
+            }
         }
 
-        let tree_oid = builder
-            .write()
-            .map_err(|e| CortexError::Git(format!("Failed to write tree: {}", e)))?;
-        let tree = repo
-            .find_tree(tree_oid)
-            .map_err(|e| CortexError::Git(format!("Failed to find tree {}: {}", tree_oid, e)))?;
-
-        let sig = Signature::now(author_name, author_email)
-            .map_err(|e| CortexError::Git(format!("Failed to create signature: {}", e)))?;
-
-        let message = format!("cortex: append {} records to ledger", records.len());
-
-        let commit_oid = match &parent_commit {
-            Some(parent) => repo.commit(Some(LEDGER_REF), &sig, &sig, &message, &tree, &[parent]),
-            None => repo.commit(Some(LEDGER_REF), &sig, &sig, &message, &tree, &[]),
-        }
-        .map_err(|e| CortexError::Git(format!("Failed to create ledger commit: {}", e)))?;
-
-        Ok(commit_oid)
+        Err(CortexError::Git(format!(
+            "Failed to append to ledger after {} attempts due to concurrent updates: {:?}",
+            MAX_RETRIES, last_err
+        )))
     }
 
     /// Re-index all records from refs/cortex/ledger tree into local SQLite state.db
@@ -358,7 +385,28 @@ fn walk_tree_and_index(
                 "EVENT"
             };
 
-            db.save_record(id, kind, content, "LEDGER", true, "main", &content_hash)?;
+            let mut branch = "main".to_string();
+            let mut created_at = chrono::Utc::now().to_rfc3339();
+
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(content) {
+                if let Some(b) = v.get("branch_context").and_then(|x| x.as_str()) {
+                    branch = b.to_string();
+                }
+                if let Some(c) = v.get("created_at").and_then(|x| x.as_str()) {
+                    created_at = c.to_string();
+                }
+            }
+
+            db.save_record_with_timestamp(
+                id,
+                kind,
+                content,
+                "LEDGER",
+                true,
+                &branch,
+                &created_at,
+                &content_hash,
+            )?;
 
             if kind == "TOMBSTONE" {
                 if let Ok(record) = serde_json::from_str::<TombstoneRecord>(content) {
@@ -424,17 +472,17 @@ mod tests {
         let (_temp, repo) = create_test_repo();
 
         let rec1 = LedgerRecord {
-            id: "tmb_ab000000000000000000001".to_string(),
+            id: "tmb_000000000000000000000000ab".to_string(),
             kind: "tombstones".to_string(),
             json: r#"{"id":"tmb_1"}"#.to_string(),
         };
         let rec2 = LedgerRecord {
-            id: "tmb_cd000000000000000000002".to_string(),
+            id: "tmb_000000000000000000000000cd".to_string(),
             kind: "tombstones".to_string(),
             json: r#"{"id":"tmb_2"}"#.to_string(),
         };
         let rec3 = LedgerRecord {
-            id: "inv_ef000000000000000000003".to_string(),
+            id: "inv_000000000000000000000000ef".to_string(),
             kind: "invariants".to_string(),
             json: r#"{"id":"inv_3"}"#.to_string(),
         };
@@ -453,9 +501,9 @@ mod tests {
         collect_tree_blobs(&repo, &tree, "", &mut blobs).unwrap();
 
         assert_eq!(blobs.len(), 3);
-        assert!(blobs.contains_key("v1/tombstones/ab/tmb_ab000000000000000000001.json"));
-        assert!(blobs.contains_key("v1/tombstones/cd/tmb_cd000000000000000000002.json"));
-        assert!(blobs.contains_key("v1/invariants/ef/inv_ef000000000000000000003.json"));
+        assert!(blobs.contains_key("v1/tombstones/ab/tmb_000000000000000000000000ab.json"));
+        assert!(blobs.contains_key("v1/tombstones/cd/tmb_000000000000000000000000cd.json"));
+        assert!(blobs.contains_key("v1/invariants/ef/inv_000000000000000000000000ef.json"));
     }
 
     #[test]
@@ -523,5 +571,44 @@ mod tests {
         let err =
             CortexLedger::merge_commits(&repo, tamper_oid, "Test", "test@test.com").unwrap_err();
         assert!(err.to_string().contains("Tamper alert"));
+    }
+
+    #[test]
+    fn test_reindex_preserves_branch_and_timestamp() {
+        let (temp, repo) = create_test_repo();
+        let db_path = temp.path().join("state.db");
+        let mut db = CortexDb::open(&db_path).unwrap();
+
+        let rec = LedgerRecord {
+            id: "tmb_00000000000000000000000099".to_string(),
+            kind: "tombstones".to_string(),
+            json: r#"{
+                "$schema": "https://git-cortex.dev/schemas/v0.1/tombstone.json",
+                "id": "tmb_00000000000000000000000099",
+                "schema_version": "0.1.0",
+                "created_at": "2026-01-01T00:00:00Z",
+                "author_harness": "test",
+                "branch_context": "feature/branch-x",
+                "base_commit_sha": "0000",
+                "capture_mode": "MANUAL",
+                "target_symbols": [],
+                "attempted_approach": "test",
+                "failure_reason": "test",
+                "verification_evidence": {"command": "test", "exit_code": 1, "error_signature": "err"},
+                "invalidation_policy": {"invalidate_on_any_ast_change": []}
+            }"#.to_string(),
+        };
+
+        CortexLedger::append_records(&repo, &[rec], "Author", "author@test.com").unwrap();
+
+        let count = CortexLedger::reindex_into_db(&repo, &mut db).unwrap();
+        assert_eq!(count, 1);
+
+        let stored = db
+            .get_record("tmb_00000000000000000000000099")
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.branch, "feature/branch-x");
+        assert_eq!(stored.created_at, "2026-01-01T00:00:00Z");
     }
 }

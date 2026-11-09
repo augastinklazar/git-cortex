@@ -23,8 +23,8 @@ impl CortexRepo {
             .ok_or_else(|| CortexError::Git("Bare repositories are not supported".to_string()))?
             .to_path_buf();
 
-        // git_dir handles worktrees: repo.path() points to gitdir
-        let git_dir = repo.path().to_path_buf();
+        // Resolve primary common .git directory across main repository and linked worktrees
+        let git_dir = Self::resolve_commondir(&repo);
         let cortex_dir = git_dir.join("cortex");
 
         if !cortex_dir.exists() {
@@ -37,6 +37,25 @@ impl CortexRepo {
             git_dir,
             cortex_dir,
         })
+    }
+
+    /// Resolve primary .git common directory, supporting linked Git worktrees
+    pub fn resolve_commondir(repo: &Repository) -> PathBuf {
+        let git_dir = repo.path();
+        let commondir_file = git_dir.join("commondir");
+        if commondir_file.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&commondir_file) {
+                let trimmed = content.trim();
+                if !trimmed.is_empty() {
+                    let resolved = git_dir.join(trimmed);
+                    if let Ok(canon) = resolved.canonicalize() {
+                        return canon;
+                    }
+                    return resolved;
+                }
+            }
+        }
+        git_dir.to_path_buf()
     }
 
     /// Return path to SQLite database (.git/cortex/state.db)
@@ -91,6 +110,13 @@ impl CortexRepo {
             if let Some(path) = entry.path() {
                 sha2::Digest::update(&mut hasher, path.as_bytes());
                 sha2::Digest::update(&mut hasher, format!("{:?}", entry.status()).as_bytes());
+
+                let full_path = self.workdir.join(path);
+                if full_path.is_file() {
+                    if let Ok(bytes) = std::fs::read(&full_path) {
+                        sha2::Digest::update(&mut hasher, &bytes);
+                    }
+                }
                 count += 1;
             }
         }

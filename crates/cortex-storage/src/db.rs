@@ -75,6 +75,30 @@ impl CortexDb {
         content_hash: &str,
     ) -> Result<()> {
         let created_at = chrono::Utc::now().to_rfc3339();
+        self.save_record_with_timestamp(
+            id,
+            kind,
+            json,
+            origin,
+            promoted,
+            branch,
+            &created_at,
+            content_hash,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_record_with_timestamp(
+        &mut self,
+        id: &str,
+        kind: &str,
+        json: &str,
+        origin: &str,
+        promoted: bool,
+        branch: &str,
+        created_at: &str,
+        content_hash: &str,
+    ) -> Result<()> {
         self.conn
             .execute(
                 r#"
@@ -85,6 +109,7 @@ impl CortexDb {
                     origin = excluded.origin,
                     promoted = excluded.promoted,
                     branch = excluded.branch,
+                    created_at = excluded.created_at,
                     content_hash = excluded.content_hash
                 "#,
                 params![
