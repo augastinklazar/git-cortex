@@ -21,10 +21,10 @@ impl Language {
 
         match ext.as_str() {
             "rs" => Self::Rust,
-            "ts" => Self::TypeScript,
+            "ts" | "mts" | "cts" => Self::TypeScript,
             "tsx" => Self::Tsx,
             "js" | "mjs" | "cjs" | "jsx" => Self::JavaScript,
-            "py" => Self::Python,
+            "py" | "pyi" => Self::Python,
             "go" => Self::Go,
             _ => Self::Unsupported,
         }
@@ -39,5 +39,39 @@ impl Language {
             Self::Rust => "::",
             _ => ".",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_language_detection() {
+        assert_eq!(
+            Language::from_path(Path::new("src/index.ts")),
+            Language::TypeScript
+        );
+        assert_eq!(
+            Language::from_path(Path::new("src/index.mts")),
+            Language::TypeScript
+        );
+        assert_eq!(
+            Language::from_path(Path::new("src/index.cts")),
+            Language::TypeScript
+        );
+        assert_eq!(
+            Language::from_path(Path::new("lib/types.pyi")),
+            Language::Python
+        );
+        assert_eq!(
+            Language::from_path(Path::new("lib/script.py")),
+            Language::Python
+        );
+        assert_eq!(Language::from_path(Path::new("main.rs")), Language::Rust);
+        assert_eq!(
+            Language::from_path(Path::new("README.md")),
+            Language::Unsupported
+        );
     }
 }
