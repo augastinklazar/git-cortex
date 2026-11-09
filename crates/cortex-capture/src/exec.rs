@@ -5,9 +5,33 @@ use cortex_core::error::{CortexError, Result};
 use cortex_core::id::{IdPrefix, PrefixedId};
 use cortex_storage::{CortexDb, CortexRepo, StoredCandidate, StoredExec};
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::thread;
 use std::time::Instant;
+
+pub fn safe_tail_utf8(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    let mut start = s.len() - max_bytes;
+    while start < s.len() && !s.is_char_boundary(start) {
+        start += 1;
+    }
+    s[start..].to_string()
+}
+
+pub fn safe_truncate_utf8(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
 
 pub fn execute_command(
     repo: &CortexRepo,
@@ -39,41 +63,66 @@ pub fn execute_command(
         .spawn()
         .map_err(|e| CortexError::Other(format!("Failed to spawn command '{}': {}", prog, e)))?;
 
-    let timeout_duration = timeout_secs
-        .filter(|&t| t > 0)
-        .map(std::time::Duration::from_secs);
-    let mut timed_out = false;
+    let mut stdout_pipe = child
+        .stdout
+        .take()
+        .ok_or_else(|| CortexError::Other("Failed to capture child stdout".to_string()))?;
+    let mut stderr_pipe = child
+        .stderr
+        .take()
+        .ok_or_else(|| CortexError::Other("Failed to capture child stderr".to_string()))?;
 
-    if let Some(limit) = timeout_duration {
+    let stdout_handle = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout_pipe.read_to_end(&mut buf);
+        buf
+    });
+
+    let stderr_handle = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr_pipe.read_to_end(&mut buf);
+        buf
+    });
+
+    let mut timed_out = false;
+    let status = if let Some(limit) = timeout_secs
+        .filter(|&t| t > 0)
+        .map(std::time::Duration::from_secs)
+    {
         loop {
             match child.try_wait() {
-                Ok(Some(_)) => break,
+                Ok(Some(st)) => break st,
                 Ok(None) => {
                     if start_time.elapsed() >= limit {
                         let _ = child.kill();
                         timed_out = true;
-                        break;
+                        break child
+                            .wait()
+                            .map_err(|e| CortexError::Other(e.to_string()))?;
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    thread::sleep(std::time::Duration::from_millis(25));
                 }
-                Err(_) => break,
+                Err(e) => return Err(CortexError::Other(e.to_string())),
             }
         }
-    }
+    } else {
+        child
+            .wait()
+            .map_err(|e| CortexError::Other(e.to_string()))?
+    };
 
-    let output = child
-        .wait_with_output()
-        .map_err(|e| CortexError::Other(format!("Failed to wait on command '{}': {}", prog, e)))?;
+    let stdout_bytes = stdout_handle.join().unwrap_or_default();
+    let stderr_bytes = stderr_handle.join().unwrap_or_default();
 
     let duration_ms = start_time.elapsed().as_millis() as i64;
     let exit_code = if timed_out {
         124
     } else {
-        output.status.code().unwrap_or(1)
+        status.code().unwrap_or(1)
     };
 
-    let stdout_str = String::from_utf8_lossy(&output.stdout);
-    let stderr_str = String::from_utf8_lossy(&output.stderr);
+    let stdout_str = String::from_utf8_lossy(&stdout_bytes);
+    let stderr_str = String::from_utf8_lossy(&stderr_bytes);
 
     // Forward output to terminal
     print!("{}", stdout_str);
@@ -86,11 +135,7 @@ pub fn execute_command(
         "SUCCESS".to_string()
     };
 
-    let tail_bytes = if full_output.len() > 4096 {
-        full_output[full_output.len() - 4096..].to_string()
-    } else {
-        full_output.clone()
-    };
+    let tail_bytes = safe_tail_utf8(&full_output, 4096);
 
     let exec_id = PrefixedId::new(IdPrefix::Checkpoint).to_string();
     let cmd_str = cmd_args.join(" ");

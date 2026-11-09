@@ -41,8 +41,8 @@ fn normalize_signature_line(line: &str) -> String {
     s = HEX_REGEX.replace_all(&s, "0x<HEX>").into_owned();
     s = TIME_REGEX.replace_all(&s, "<TIME>").into_owned();
     if s.len() > 300 {
-        s.truncate(297);
-        s.push_str("...");
+        let truncated = crate::exec::safe_truncate_utf8(&s, 297);
+        return format!("{}...", truncated);
     }
     s
 }
@@ -57,5 +57,14 @@ mod tests {
         let sig = extract_error_signature(log);
         assert!(sig.contains("AssertionError"));
         assert!(sig.contains("0x<HEX>"));
+    }
+
+    #[test]
+    fn test_signature_utf8_boundary_truncation() {
+        let mut s = "a".repeat(296);
+        s.push('─'); // 3-byte char crossing boundary
+        s.push_str("extra text exceeding max limit");
+        let sig = normalize_signature_line(&s);
+        assert!(sig.ends_with("..."));
     }
 }
